@@ -15,13 +15,15 @@ type tokenBucketState struct {
 	LastRefill time.Time
 }
 
+const shardCount = 256
+
 // TokenBucket implements the token bucket rate limiting algorithm.
 // Tokens are added at a steady rate and consumed by requests.
 // This allows for controlled bursting while maintaining an average rate.
 type TokenBucket struct {
 	config ratelimiter.Config
 	store  store.Store
-	mu     sync.Mutex // Protects state updates
+	mu     [shardCount]sync.Mutex // Sharded mutexes to reduce contention
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -52,8 +54,9 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 		return true, nil
 	}
 
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
+	mu := tb.getLock(key)
+	mu.Lock()
+	defer mu.Unlock()
 
 	now := time.Now()
 	state := tb.getState(key, now)
@@ -83,13 +86,17 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 
 // Reset clears the rate limit state for the given key.
 func (tb *TokenBucket) Reset(key string) error {
+	mu := tb.getLock(key)
+	mu.Lock()
+	defer mu.Unlock()
 	return tb.store.Delete(tb.storeKey(key))
 }
 
 // Remaining returns the number of tokens remaining for the given key.
 func (tb *TokenBucket) Remaining(key string) int {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
+	mu := tb.getLock(key)
+	mu.Lock()
+	defer mu.Unlock()
 
 	state := tb.getState(key, time.Now())
 	return int(state.Tokens)
@@ -122,4 +129,22 @@ func (tb *TokenBucket) saveState(key string, state tokenBucketState) {
 // storeKey generates the storage key for a rate limit key.
 func (tb *TokenBucket) storeKey(key string) string {
 	return "tb:" + key
+}
+
+// getLock returns the mutex for the given key based on a hash.
+func (tb *TokenBucket) getLock(key string) *sync.Mutex {
+	idx := fnv32a(key) % shardCount
+	return &tb.mu[idx]
+}
+
+// fnv32a is a local implementation of FNV-1a 32-bit hash to avoid allocation and imports
+func fnv32a(s string) uint32 {
+	const offset32 = 2166136261
+	const prime32 = 16777619
+	h := uint32(offset32)
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= prime32
+	}
+	return h
 }
