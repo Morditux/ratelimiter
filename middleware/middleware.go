@@ -2,6 +2,8 @@
 package middleware
 
 import (
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -67,6 +69,8 @@ func WithIncludeMethods(methods ...string) Option {
 
 // DefaultKeyFunc extracts the client IP from the request.
 // It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
+// Note: This function blindly trusts X-Forwarded-For, which can be spoofed.
+// Use TrustedIPKeyFunc for a secure alternative when behind a proxy.
 func DefaultKeyFunc(r *http.Request) string {
 	// Check X-Forwarded-For header (may contain multiple IPs)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
@@ -81,7 +85,78 @@ func DefaultKeyFunc(r *http.Request) string {
 		return xri
 	}
 
-	// Fall back to RemoteAddr (strip port if present)
+	return getRemoteIP(r)
+}
+
+// TrustedIPKeyFunc returns a KeyFunc that securely extracts the client IP
+// by trusting only specific proxies. It parses X-Forwarded-For from right to left,
+// skipping IPs that match the trustedProxies list.
+// trustedProxies can be individual IPs or CIDR blocks (e.g., "10.0.0.0/8").
+func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
+	cidrs := make([]*net.IPNet, 0, len(trustedProxies))
+	for _, t := range trustedProxies {
+		_, network, err := net.ParseCIDR(t)
+		if err != nil {
+			// Try parsing as single IP
+			ip := net.ParseIP(t)
+			if ip == nil {
+				return nil, fmt.Errorf("invalid IP or CIDR: %s", t)
+			}
+			// Convert single IP to /32 or /128 CIDR
+			bits := 32
+			if ip.To4() == nil {
+				bits = 128
+			}
+			network = &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)}
+		}
+		cidrs = append(cidrs, network)
+	}
+
+	return func(r *http.Request) string {
+		remoteIP := getRemoteIP(r)
+
+		// Collect all IPs: [...X-Forwarded-For, RemoteAddr]
+		var ips []string
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			for _, p := range parts {
+				ips = append(ips, strings.TrimSpace(p))
+			}
+		}
+		ips = append(ips, remoteIP)
+
+		// Iterate backwards
+		for i := len(ips) - 1; i >= 0; i-- {
+			ipStr := ips[i]
+			ip := net.ParseIP(ipStr)
+			if ip == nil {
+				continue // Skip invalid IPs
+			}
+
+			isTrusted := false
+			for _, cidr := range cidrs {
+				if cidr.Contains(ip) {
+					isTrusted = true
+					break
+				}
+			}
+
+			if !isTrusted {
+				return ipStr
+			}
+		}
+
+		// If all are trusted, return the first one (original client)
+		// or the last one if list is empty (shouldn't happen)
+		if len(ips) > 0 {
+			return ips[0]
+		}
+		return remoteIP
+	}, nil
+}
+
+// getRemoteIP extracts the IP from RemoteAddr, handling IPv6 brackets and ports.
+func getRemoteIP(r *http.Request) string {
 	addr := r.RemoteAddr
 	if idx := strings.LastIndex(addr, ":"); idx != -1 {
 		// Check if this looks like IPv6 (contains multiple colons)
@@ -93,11 +168,14 @@ func DefaultKeyFunc(r *http.Request) string {
 				}
 				return addr
 			}
+			// No brackets, but multiple colons. Could be just IPv6 or IPv6:port
+			// If it has a port, the last colon separates it.
+			// But IPv6 without brackets is ambiguous if it has a port?
+			// Go's RemoteAddr is usually [IP]:port for IPv6.
 			return addr
 		}
 		return addr[:idx]
 	}
-
 	return addr
 }
 
