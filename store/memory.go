@@ -5,13 +5,19 @@ import (
 	"time"
 )
 
+const shardCount = 256
+
+type shard struct {
+	mu      sync.RWMutex
+	entries map[string]Entry
+}
+
 // MemoryStore is an in-memory implementation of the Store interface.
 // It provides automatic cleanup of expired entries.
 type MemoryStore struct {
-	mu       sync.RWMutex
-	entries  map[string]Entry
-	stopChan chan struct{}
-	stopped  bool
+	shards    [shardCount]*shard
+	stopChan  chan struct{}
+	closeOnce sync.Once
 }
 
 // MemoryStoreConfig holds configuration for MemoryStore.
@@ -40,8 +46,13 @@ func NewMemoryStoreWithConfig(config MemoryStoreConfig) *MemoryStore {
 	}
 
 	s := &MemoryStore{
-		entries:  make(map[string]Entry),
 		stopChan: make(chan struct{}),
+	}
+
+	for i := 0; i < shardCount; i++ {
+		s.shards[i] = &shard{
+			entries: make(map[string]Entry),
+		}
 	}
 
 	go s.cleanupLoop(config.CleanupInterval)
@@ -51,10 +62,11 @@ func NewMemoryStoreWithConfig(config MemoryStoreConfig) *MemoryStore {
 
 // Get retrieves a value from the store.
 func (s *MemoryStore) Get(key string) (interface{}, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	shard := s.getShard(key)
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
 
-	entry, exists := s.entries[key]
+	entry, exists := shard.entries[key]
 	if !exists {
 		return nil, false
 	}
@@ -68,8 +80,9 @@ func (s *MemoryStore) Get(key string) (interface{}, bool) {
 
 // Set stores a value with an optional TTL.
 func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
 	entry := Entry{
 		Value: value,
@@ -79,38 +92,37 @@ func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) erro
 		entry.ExpiresAt = time.Now().Add(ttl)
 	}
 
-	s.entries[key] = entry
+	shard.entries[key] = entry
 	return nil
 }
 
 // Delete removes a value from the store.
 func (s *MemoryStore) Delete(key string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	shard := s.getShard(key)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
 
-	delete(s.entries, key)
+	delete(shard.entries, key)
 	return nil
 }
 
 // Close stops the cleanup routine and releases resources.
 func (s *MemoryStore) Close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if !s.stopped {
+	s.closeOnce.Do(func() {
 		close(s.stopChan)
-		s.stopped = true
-	}
-
+	})
 	return nil
 }
 
 // Len returns the number of entries in the store (including expired ones).
 func (s *MemoryStore) Len() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	return len(s.entries)
+	count := 0
+	for _, shard := range s.shards {
+		shard.mu.RLock()
+		count += len(shard.entries)
+		shard.mu.RUnlock()
+	}
+	return count
 }
 
 // cleanupLoop periodically removes expired entries.
@@ -130,13 +142,32 @@ func (s *MemoryStore) cleanupLoop(interval time.Duration) {
 
 // cleanup removes all expired entries.
 func (s *MemoryStore) cleanup() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	now := time.Now()
-	for key, entry := range s.entries {
-		if !entry.ExpiresAt.IsZero() && now.After(entry.ExpiresAt) {
-			delete(s.entries, key)
+	for _, shard := range s.shards {
+		shard.mu.Lock()
+		for key, entry := range shard.entries {
+			if !entry.ExpiresAt.IsZero() && now.After(entry.ExpiresAt) {
+				delete(shard.entries, key)
+			}
 		}
+		shard.mu.Unlock()
 	}
+}
+
+// getShard returns the shard for the given key.
+func (s *MemoryStore) getShard(key string) *shard {
+	idx := fnv32a(key) % shardCount
+	return s.shards[idx]
+}
+
+// fnv32a is a local implementation of FNV-1a 32-bit hash
+func fnv32a(s string) uint32 {
+	const offset32 = 2166136261
+	const prime32 = 16777619
+	h := uint32(offset32)
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= prime32
+	}
+	return h
 }
