@@ -55,7 +55,7 @@ func main() {
     })
 
     // Apply the middleware
-    http.Handle("/", middleware.RateLimitMiddleware(limiter)(handler))
+    http.Handle("/", middleware.RateLimitMiddleware(limiter,handler))
 
     http.ListenAndServe(":8080", nil)
 }
