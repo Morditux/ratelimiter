@@ -21,7 +21,7 @@ type slidingWindowState struct {
 type SlidingWindow struct {
 	config ratelimiter.Config
 	store  store.Store
-	mu     sync.Mutex
+	mu     [shardCount]sync.Mutex // Sharded mutexes to reduce contention
 }
 
 // NewSlidingWindow creates a new sliding window rate limiter.
@@ -47,8 +47,9 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 		return true, nil
 	}
 
-	sw.mu.Lock()
-	defer sw.mu.Unlock()
+	mu := sw.getLock(key)
+	mu.Lock()
+	defer mu.Unlock()
 
 	now := time.Now()
 	state := sw.getState(key, now)
@@ -76,13 +77,17 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 
 // Reset clears the rate limit state for the given key.
 func (sw *SlidingWindow) Reset(key string) error {
+	mu := sw.getLock(key)
+	mu.Lock()
+	defer mu.Unlock()
 	return sw.store.Delete(sw.storeKey(key))
 }
 
 // Remaining returns an estimate of remaining requests for the given key.
 func (sw *SlidingWindow) Remaining(key string) int {
-	sw.mu.Lock()
-	defer sw.mu.Unlock()
+	mu := sw.getLock(key)
+	mu.Lock()
+	defer mu.Unlock()
 
 	now := time.Now()
 	state := sw.getState(key, now)
@@ -149,4 +154,10 @@ func (sw *SlidingWindow) saveState(key string, state slidingWindowState) {
 // storeKey generates the storage key for a rate limit key.
 func (sw *SlidingWindow) storeKey(key string) string {
 	return "sw:" + key
+}
+
+// getLock returns the mutex for the given key based on a hash.
+func (sw *SlidingWindow) getLock(key string) *sync.Mutex {
+	idx := fnv32a(key) % shardCount
+	return &sw.mu[idx]
 }
