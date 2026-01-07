@@ -157,26 +157,11 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 
 // getRemoteIP extracts the IP from RemoteAddr, handling IPv6 brackets and ports.
 func getRemoteIP(r *http.Request) string {
-	addr := r.RemoteAddr
-	if idx := strings.LastIndex(addr, ":"); idx != -1 {
-		// Check if this looks like IPv6 (contains multiple colons)
-		if strings.Count(addr, ":") > 1 {
-			// IPv6 address, look for bracket
-			if bracketIdx := strings.LastIndex(addr, "]"); bracketIdx != -1 {
-				if colonIdx := strings.LastIndex(addr[bracketIdx:], ":"); colonIdx != -1 {
-					return addr[:bracketIdx+1]
-				}
-				return addr
-			}
-			// No brackets, but multiple colons. Could be just IPv6 or IPv6:port
-			// If it has a port, the last colon separates it.
-			// But IPv6 without brackets is ambiguous if it has a port?
-			// Go's RemoteAddr is usually [IP]:port for IPv6.
-			return addr
-		}
-		return addr[:idx]
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
 	}
-	return addr
+	return r.RemoteAddr
 }
 
 // DefaultOnLimited returns a 429 response with a JSON body.
