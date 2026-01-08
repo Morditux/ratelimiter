@@ -15,9 +15,10 @@ type shard struct {
 // MemoryStore is an in-memory implementation of the Store interface.
 // It provides automatic cleanup of expired entries.
 type MemoryStore struct {
-	shards    [shardCount]*shard
-	stopChan  chan struct{}
-	closeOnce sync.Once
+	shards       [shardCount]*shard
+	stopChan     chan struct{}
+	closeOnce    sync.Once
+	maxShardSize int
 }
 
 // MemoryStoreConfig holds configuration for MemoryStore.
@@ -25,12 +26,16 @@ type MemoryStoreConfig struct {
 	// CleanupInterval is how often to run the cleanup routine.
 	// Default is 1 minute.
 	CleanupInterval time.Duration
+	// MaxEntries is the maximum number of keys to store.
+	// Default is 1,000,000.
+	MaxEntries int
 }
 
 // DefaultMemoryStoreConfig returns sensible defaults for MemoryStore.
 func DefaultMemoryStoreConfig() MemoryStoreConfig {
 	return MemoryStoreConfig{
 		CleanupInterval: time.Minute,
+		MaxEntries:      1_000_000,
 	}
 }
 
@@ -44,9 +49,19 @@ func NewMemoryStoreWithConfig(config MemoryStoreConfig) *MemoryStore {
 	if config.CleanupInterval <= 0 {
 		config.CleanupInterval = time.Minute
 	}
+	if config.MaxEntries <= 0 {
+		config.MaxEntries = 1_000_000
+	}
 
 	s := &MemoryStore{
 		stopChan: make(chan struct{}),
+	}
+
+	// Calculate approximate per-shard limit
+	// Ensure at least 1 entry per shard if MaxEntries is very small
+	s.maxShardSize = config.MaxEntries / shardCount
+	if s.maxShardSize < 1 {
+		s.maxShardSize = 1
 	}
 
 	for i := 0; i < shardCount; i++ {
@@ -83,6 +98,18 @@ func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) erro
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+
+	// Check if key already exists to allow updates even if full
+	_, exists := shard.entries[key]
+
+	if !exists {
+		// New key, check capacity
+		if len(shard.entries) >= s.maxShardSize {
+			// Do NOT clean up here to avoid O(N) in hot path.
+			// Rely on background cleanup.
+			return ErrStoreFull
+		}
+	}
 
 	entry := Entry{
 		Value: value,
@@ -142,15 +169,21 @@ func (s *MemoryStore) cleanupLoop(interval time.Duration) {
 
 // cleanup removes all expired entries.
 func (s *MemoryStore) cleanup() {
-	now := time.Now()
 	for _, shard := range s.shards {
 		shard.mu.Lock()
-		for key, entry := range shard.entries {
-			if !entry.ExpiresAt.IsZero() && now.After(entry.ExpiresAt) {
-				delete(shard.entries, key)
-			}
-		}
+		s.cleanupShard(shard)
 		shard.mu.Unlock()
+	}
+}
+
+// cleanupShard removes expired entries from a specific shard.
+// It assumes the caller holds the lock.
+func (s *MemoryStore) cleanupShard(shard *shard) {
+	now := time.Now()
+	for key, entry := range shard.entries {
+		if !entry.ExpiresAt.IsZero() && now.After(entry.ExpiresAt) {
+			delete(shard.entries, key)
+		}
 	}
 }
 
