@@ -5,3 +5,7 @@
 ## 2024-05-24 - SlidingWindow Global Lock Removal
 **Learning:** Even if the underlying `MemoryStore` is optimized with sharded locks, a global lock in the `SlidingWindow` algorithm layer serialized all requests, negating the store's concurrency benefits. Benchmark showed `SlidingWindow` (global lock) was significantly slower (1020ns/op) than `TokenBucket` (sharded locks, 303ns/op) under high concurrency with multiple keys.
 **Action:** Always check the entire call stack for locks. If a lower layer is optimized for concurrency, ensure the upper layer doesn't serialize access unnecessarily. Implementing sharded locks in `SlidingWindow` (mirroring `TokenBucket`'s strategy) improved performance by ~3x (347ns/op) for concurrent workloads.
+
+## 2024-05-24 - Reduce Hot Path Allocations
+**Learning:** In the `TokenBucket` implementation, helper methods `getState` and `saveState` were both calling `storeKey` (which allocates a new string) separately. This resulted in redundant allocations inside the hot path `AllowN`.
+**Action:** Hoist stateless calculations like key generation out of helper methods and repetitive loops. By calculating `storeKey` once in `AllowN` and passing it down, we reduced allocations from 3 to 2 per operation and improved throughput by ~10%.

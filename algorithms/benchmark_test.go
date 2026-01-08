@@ -18,6 +18,7 @@ func BenchmarkTokenBucket_Allow(b *testing.B) {
 		BurstSize: 1000000,
 	}, s)
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -35,6 +36,7 @@ func BenchmarkSlidingWindow_Allow(b *testing.B) {
 		Window: time.Second,
 	}, s)
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -58,6 +60,7 @@ func BenchmarkTokenBucket_MultipleKeys(b *testing.B) {
 		keys[i] = string(rune(i))
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
@@ -82,6 +85,7 @@ func BenchmarkSlidingWindow_MultipleKeys(b *testing.B) {
 		keys[i] = string(rune(i))
 	}
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0

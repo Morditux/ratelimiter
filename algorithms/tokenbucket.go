@@ -54,12 +54,14 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 		return true, nil
 	}
 
+	storeKey := tb.storeKey(key)
+
 	mu := tb.getLock(key)
 	mu.Lock()
 	defer mu.Unlock()
 
 	now := time.Now()
-	state := tb.getState(key, now)
+	state := tb.getState(storeKey, now)
 
 	// Refill tokens based on time elapsed
 	elapsed := now.Sub(state.LastRefill)
@@ -75,12 +77,12 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 	// Check if we have enough tokens
 	if state.Tokens >= float64(n) {
 		state.Tokens -= float64(n)
-		tb.saveState(key, state)
+		tb.saveState(storeKey, state)
 		return true, nil
 	}
 
 	// Not enough tokens, save state and reject
-	tb.saveState(key, state)
+	tb.saveState(storeKey, state)
 	return false, nil
 }
 
@@ -98,14 +100,12 @@ func (tb *TokenBucket) Remaining(key string) int {
 	mu.Lock()
 	defer mu.Unlock()
 
-	state := tb.getState(key, time.Now())
+	state := tb.getState(tb.storeKey(key), time.Now())
 	return int(state.Tokens)
 }
 
 // getState retrieves or initializes the token bucket state.
-func (tb *TokenBucket) getState(key string, now time.Time) tokenBucketState {
-	storeKey := tb.storeKey(key)
-
+func (tb *TokenBucket) getState(storeKey string, now time.Time) tokenBucketState {
 	if val, ok := tb.store.Get(storeKey); ok {
 		if state, ok := val.(tokenBucketState); ok {
 			return state
@@ -120,8 +120,7 @@ func (tb *TokenBucket) getState(key string, now time.Time) tokenBucketState {
 }
 
 // saveState persists the token bucket state.
-func (tb *TokenBucket) saveState(key string, state tokenBucketState) {
-	storeKey := tb.storeKey(key)
+func (tb *TokenBucket) saveState(storeKey string, state tokenBucketState) {
 	// Store with a TTL of 2x the window to allow for cleanup
 	_ = tb.store.Set(storeKey, state, tb.config.Window*2)
 }
