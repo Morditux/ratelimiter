@@ -1,7 +1,13 @@
 // Package store provides storage backends for rate limiting data.
 package store
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrStoreFull is returned when the storage capacity is reached.
+var ErrStoreFull = errors.New("ratelimiter: store capacity exceeded")
 
 // Store defines the storage interface for rate limiting data.
 // Implementations must be safe for concurrent use.
