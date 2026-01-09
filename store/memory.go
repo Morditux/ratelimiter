@@ -19,6 +19,7 @@ type MemoryStore struct {
 	stopChan     chan struct{}
 	closeOnce    sync.Once
 	maxShardSize int
+	maxKeySize   int
 }
 
 // MemoryStoreConfig holds configuration for MemoryStore.
@@ -29,6 +30,9 @@ type MemoryStoreConfig struct {
 	// MaxEntries is the maximum number of keys to store.
 	// Default is 1,000,000.
 	MaxEntries int
+	// MaxKeySize is the maximum length of a key in bytes.
+	// Default is 4096.
+	MaxKeySize int
 }
 
 // DefaultMemoryStoreConfig returns sensible defaults for MemoryStore.
@@ -36,6 +40,7 @@ func DefaultMemoryStoreConfig() MemoryStoreConfig {
 	return MemoryStoreConfig{
 		CleanupInterval: time.Minute,
 		MaxEntries:      1_000_000,
+		MaxKeySize:      4096,
 	}
 }
 
@@ -52,9 +57,13 @@ func NewMemoryStoreWithConfig(config MemoryStoreConfig) *MemoryStore {
 	if config.MaxEntries <= 0 {
 		config.MaxEntries = 1_000_000
 	}
+	if config.MaxKeySize <= 0 {
+		config.MaxKeySize = 4096
+	}
 
 	s := &MemoryStore{
-		stopChan: make(chan struct{}),
+		stopChan:   make(chan struct{}),
+		maxKeySize: config.MaxKeySize,
 	}
 
 	// Calculate approximate per-shard limit
@@ -77,6 +86,10 @@ func NewMemoryStoreWithConfig(config MemoryStoreConfig) *MemoryStore {
 
 // Get retrieves a value from the store.
 func (s *MemoryStore) Get(key string) (interface{}, bool) {
+	if len(key) > s.maxKeySize {
+		return nil, false
+	}
+
 	shard := s.getShard(key)
 	shard.mu.RLock()
 	defer shard.mu.RUnlock()
@@ -95,6 +108,10 @@ func (s *MemoryStore) Get(key string) (interface{}, bool) {
 
 // Set stores a value with an optional TTL.
 func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) error {
+	if len(key) > s.maxKeySize {
+		return ErrKeyTooLong
+	}
+
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
@@ -125,6 +142,10 @@ func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) erro
 
 // Delete removes a value from the store.
 func (s *MemoryStore) Delete(key string) error {
+	if len(key) > s.maxKeySize {
+		return ErrKeyTooLong
+	}
+
 	shard := s.getShard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()

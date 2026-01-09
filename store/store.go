@@ -9,6 +9,9 @@ import (
 // ErrStoreFull is returned when the storage capacity is reached.
 var ErrStoreFull = errors.New("ratelimiter: store capacity exceeded")
 
+// ErrKeyTooLong is returned when a key exceeds the maximum allowed length.
+var ErrKeyTooLong = errors.New("ratelimiter: key too long")
+
 // Store defines the storage interface for rate limiting data.
 // Implementations must be safe for concurrent use.
 type Store interface {
