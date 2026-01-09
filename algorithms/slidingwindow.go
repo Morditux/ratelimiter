@@ -47,12 +47,14 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 		return true, nil
 	}
 
+	storeKey := sw.storeKey(key)
+
 	mu := sw.getLock(key)
 	mu.Lock()
 	defer mu.Unlock()
 
 	now := time.Now()
-	state := sw.getState(key, now)
+	state := sw.getState(storeKey, now)
 
 	// Calculate the weighted count
 	windowProgress := now.Sub(state.WindowStart).Seconds() / sw.config.Window.Seconds()
@@ -71,7 +73,7 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 
 	// Allow the request and increment the counter
 	state.CurrCount += n
-	sw.saveState(key, state)
+	sw.saveState(storeKey, state)
 	return true, nil
 }
 
@@ -89,10 +91,9 @@ func (sw *SlidingWindow) Remaining(key string) int {
 	mu.Lock()
 	defer mu.Unlock()
 
-	now := time.Now()
-	state := sw.getState(key, now)
+	state := sw.getState(sw.storeKey(key), time.Now())
 
-	windowProgress := now.Sub(state.WindowStart).Seconds() / sw.config.Window.Seconds()
+	windowProgress := time.Since(state.WindowStart).Seconds() / sw.config.Window.Seconds()
 	if windowProgress > 1 {
 		windowProgress = 1
 	}
@@ -108,9 +109,7 @@ func (sw *SlidingWindow) Remaining(key string) int {
 }
 
 // getState retrieves or initializes the sliding window state.
-func (sw *SlidingWindow) getState(key string, now time.Time) slidingWindowState {
-	storeKey := sw.storeKey(key)
-
+func (sw *SlidingWindow) getState(storeKey string, now time.Time) slidingWindowState {
 	if val, ok := sw.store.Get(storeKey); ok {
 		if state, ok := val.(slidingWindowState); ok {
 			// Check if we need to slide to a new window
@@ -145,8 +144,7 @@ func (sw *SlidingWindow) getState(key string, now time.Time) slidingWindowState 
 }
 
 // saveState persists the sliding window state.
-func (sw *SlidingWindow) saveState(key string, state slidingWindowState) {
-	storeKey := sw.storeKey(key)
+func (sw *SlidingWindow) saveState(storeKey string, state slidingWindowState) {
 	// Store with a TTL of 3x the window to allow for proper sliding
 	_ = sw.store.Set(storeKey, state, sw.config.Window*3)
 }
