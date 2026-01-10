@@ -116,18 +116,6 @@ func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) erro
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
-	// Check if key already exists to allow updates even if full
-	_, exists := shard.entries[key]
-
-	if !exists {
-		// New key, check capacity
-		if len(shard.entries) >= s.maxShardSize {
-			// Do NOT clean up here to avoid O(N) in hot path.
-			// Rely on background cleanup.
-			return ErrStoreFull
-		}
-	}
-
 	entry := Entry{
 		Value: value,
 	}
@@ -136,8 +124,20 @@ func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) erro
 		entry.ExpiresAt = time.Now().Add(ttl)
 	}
 
-	shard.entries[key] = entry
-	return nil
+	// Optimization: avoid double lookup if shard is not full
+	if len(shard.entries) < s.maxShardSize {
+		shard.entries[key] = entry
+		return nil
+	}
+
+	// Check if key already exists to allow updates even if full
+	if _, exists := shard.entries[key]; exists {
+		shard.entries[key] = entry
+		return nil
+	}
+
+	// New key and shard is full
+	return ErrStoreFull
 }
 
 // Delete removes a value from the store.
