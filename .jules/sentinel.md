@@ -12,3 +12,8 @@
 **Vulnerability:** The in-memory store (`MemoryStore`) had no limit on the number of keys it could store. An attacker could generate millions of unique keys (e.g., spoofed IPs) to exhaust the server's memory (DoS), leading to a crash.
 **Learning:** In-memory caches/stores must always have a capacity limit (e.g., MaxEntries or MaxBytes). Trusting that "cleanup" will handle it is insufficient if the attack rate exceeds cleanup rate or if keys don't expire quickly enough.
 **Prevention:** Implemented a `MaxEntries` configuration with a safe default (1,000,000). The store now enforces this limit per-shard to maintain O(1) performance and prevent OOM. When the limit is reached, it fails safely by returning `ErrStoreFull` instead of crashing.
+
+## 2024-10-18 - Fail Open vs Fail Closed on Input Validation
+**Vulnerability:** `RateLimitMiddleware` treated all errors from `limiter.Allow` (including `ErrKeyTooLong` from the store) as system failures and failed open (allowed the request). This allowed attackers to bypass rate limiting by sending a key longer than `MaxKeySize`.
+**Learning:** Distinguish between "system errors" (DB down) and "input errors" (invalid key). Input errors must fail closed (block request) to prevent bypasses, while system errors might fail open for availability.
+**Prevention:** Check specific error types in middleware. If `errors.Is(err, store.ErrKeyTooLong)`, return 431 (Request Header Fields Too Large). For other errors, log and potentially allow.

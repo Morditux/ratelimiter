@@ -2,12 +2,14 @@
 package middleware
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strings"
 
 	"github.com/Morditux/ratelimiter"
+	"github.com/Morditux/ratelimiter/store"
 )
 
 // KeyFunc is a function that extracts a rate limiting key from a request.
@@ -214,7 +216,15 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 			// Check the rate limit
 			allowed, err := limiter.Allow(key)
 			if err != nil {
-				// Log error but allow request on error (fail open)
+				// FAIL SECURE: If the key is too long (likely an attack or misconfiguration),
+				// reject the request with 400 Bad Request or 431 Request Header Fields Too Large.
+				if errors.Is(err, store.ErrKeyTooLong) {
+					http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
+					return
+				}
+
+				// FAIL OPEN: Log error but allow request on other errors (e.g. redis down)
+				// This ensures system resilience.
 				next.ServeHTTP(w, r)
 				return
 			}
