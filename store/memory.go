@@ -7,9 +7,14 @@ import (
 
 const shardCount = 256
 
+type internalKey struct {
+	ns  string
+	key string
+}
+
 type shard struct {
 	mu      sync.RWMutex
-	entries map[string]Entry
+	entries map[internalKey]Entry
 }
 
 // MemoryStore is an in-memory implementation of the Store interface.
@@ -75,7 +80,7 @@ func NewMemoryStoreWithConfig(config MemoryStoreConfig) *MemoryStore {
 
 	for i := 0; i < shardCount; i++ {
 		s.shards[i] = &shard{
-			entries: make(map[string]Entry),
+			entries: make(map[internalKey]Entry),
 		}
 	}
 
@@ -86,15 +91,21 @@ func NewMemoryStoreWithConfig(config MemoryStoreConfig) *MemoryStore {
 
 // Get retrieves a value from the store.
 func (s *MemoryStore) Get(key string) (interface{}, bool) {
-	if len(key) > s.maxKeySize {
+	return s.GetWithNamespace("", key)
+}
+
+// GetWithNamespace retrieves a value from the store using a namespace and key.
+func (s *MemoryStore) GetWithNamespace(namespace, key string) (interface{}, bool) {
+	if len(namespace)+len(key) > s.maxKeySize {
 		return nil, false
 	}
 
-	shard := s.getShard(key)
+	k := internalKey{ns: namespace, key: key}
+	shard := s.getShard(k)
 	shard.mu.RLock()
 	defer shard.mu.RUnlock()
 
-	entry, exists := shard.entries[key]
+	entry, exists := shard.entries[k]
 	if !exists {
 		return nil, false
 	}
@@ -108,11 +119,17 @@ func (s *MemoryStore) Get(key string) (interface{}, bool) {
 
 // Set stores a value with an optional TTL.
 func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) error {
-	if len(key) > s.maxKeySize {
+	return s.SetWithNamespace("", key, value, ttl)
+}
+
+// SetWithNamespace stores a value with namespace using an optional TTL.
+func (s *MemoryStore) SetWithNamespace(namespace, key string, value interface{}, ttl time.Duration) error {
+	if len(namespace)+len(key) > s.maxKeySize {
 		return ErrKeyTooLong
 	}
 
-	shard := s.getShard(key)
+	k := internalKey{ns: namespace, key: key}
+	shard := s.getShard(k)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
@@ -126,13 +143,13 @@ func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) erro
 
 	// Optimization: avoid double lookup if shard is not full
 	if len(shard.entries) < s.maxShardSize {
-		shard.entries[key] = entry
+		shard.entries[k] = entry
 		return nil
 	}
 
 	// Check if key already exists to allow updates even if full
-	if _, exists := shard.entries[key]; exists {
-		shard.entries[key] = entry
+	if _, exists := shard.entries[k]; exists {
+		shard.entries[k] = entry
 		return nil
 	}
 
@@ -142,15 +159,21 @@ func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) erro
 
 // Delete removes a value from the store.
 func (s *MemoryStore) Delete(key string) error {
-	if len(key) > s.maxKeySize {
+	return s.DeleteWithNamespace("", key)
+}
+
+// DeleteWithNamespace removes a value from the store using a namespace and key.
+func (s *MemoryStore) DeleteWithNamespace(namespace, key string) error {
+	if len(namespace)+len(key) > s.maxKeySize {
 		return ErrKeyTooLong
 	}
 
-	shard := s.getShard(key)
+	k := internalKey{ns: namespace, key: key}
+	shard := s.getShard(k)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 
-	delete(shard.entries, key)
+	delete(shard.entries, k)
 	return nil
 }
 
@@ -209,9 +232,25 @@ func (s *MemoryStore) cleanupShard(shard *shard) {
 }
 
 // getShard returns the shard for the given key.
-func (s *MemoryStore) getShard(key string) *shard {
-	idx := fnv32a(key) % shardCount
+func (s *MemoryStore) getShard(k internalKey) *shard {
+	idx := fnv32aPair(k.ns, k.key) % shardCount
 	return s.shards[idx]
+}
+
+// fnv32aPair hashes two strings as if they were concatenated
+func fnv32aPair(a, b string) uint32 {
+	const offset32 = 2166136261
+	const prime32 = 16777619
+	h := uint32(offset32)
+	for i := 0; i < len(a); i++ {
+		h ^= uint32(a[i])
+		h *= prime32
+	}
+	for i := 0; i < len(b); i++ {
+		h ^= uint32(b[i])
+		h *= prime32
+	}
+	return h
 }
 
 // fnv32a is a local implementation of FNV-1a 32-bit hash
