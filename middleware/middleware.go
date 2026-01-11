@@ -216,10 +216,14 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 			// Check the rate limit
 			allowed, err := limiter.Allow(key)
 			if err != nil {
-				// FAIL SECURE: If the key is too long (likely an attack or misconfiguration),
-				// reject the request with 400 Bad Request or 431 Request Header Fields Too Large.
+				// FAIL SECURE: If the key is too long or store is full,
+				// reject the request to prevent rate limit bypass.
 				if errors.Is(err, store.ErrKeyTooLong) {
 					http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
+					return
+				}
+				if errors.Is(err, store.ErrStoreFull) {
+					http.Error(w, "Rate limit store full", http.StatusServiceUnavailable)
 					return
 				}
 

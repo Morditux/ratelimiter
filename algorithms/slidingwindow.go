@@ -73,7 +73,9 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 
 	// Allow the request and increment the counter
 	state.CurrCount += n
-	sw.saveState(storeKey, state)
+	if err := sw.saveState(storeKey, state); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 
@@ -144,9 +146,9 @@ func (sw *SlidingWindow) getState(storeKey string, now time.Time) slidingWindowS
 }
 
 // saveState persists the sliding window state.
-func (sw *SlidingWindow) saveState(storeKey string, state slidingWindowState) {
+func (sw *SlidingWindow) saveState(storeKey string, state slidingWindowState) error {
 	// Store with a TTL of 3x the window to allow for proper sliding
-	_ = sw.store.Set(storeKey, state, sw.config.Window*3)
+	return sw.store.Set(storeKey, state, sw.config.Window*3)
 }
 
 // storeKey generates the storage key for a rate limit key.
