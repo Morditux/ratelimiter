@@ -30,6 +30,20 @@ type Store interface {
 	Close() error
 }
 
+// NamespacedStore extends Store with namespace support to avoid string concatenation allocations.
+type NamespacedStore interface {
+	Store
+
+	// GetWithNamespace retrieves a value from the store using a namespace and key.
+	GetWithNamespace(namespace, key string) (interface{}, bool)
+
+	// SetWithNamespace stores a value with namespace using an optional TTL.
+	SetWithNamespace(namespace, key string, value interface{}, ttl time.Duration) error
+
+	// DeleteWithNamespace removes a value from the store using a namespace and key.
+	DeleteWithNamespace(namespace, key string) error
+}
+
 // Entry represents a stored value with its expiration time.
 type Entry struct {
 	Value     interface{}

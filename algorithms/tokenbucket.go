@@ -21,9 +21,10 @@ const shardCount = 256
 // Tokens are added at a steady rate and consumed by requests.
 // This allows for controlled bursting while maintaining an average rate.
 type TokenBucket struct {
-	config ratelimiter.Config
-	store  store.Store
-	mu     [shardCount]sync.Mutex // Sharded mutexes to reduce contention
+	config  ratelimiter.Config
+	store   store.Store
+	nsStore store.NamespacedStore
+	mu      [shardCount]sync.Mutex // Sharded mutexes to reduce contention
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -37,10 +38,16 @@ func NewTokenBucket(config ratelimiter.Config, s store.Store) (*TokenBucket, err
 		config.BurstSize = config.Rate
 	}
 
-	return &TokenBucket{
+	tb := &TokenBucket{
 		config: config,
 		store:  s,
-	}, nil
+	}
+
+	if ns, ok := s.(store.NamespacedStore); ok {
+		tb.nsStore = ns
+	}
+
+	return tb, nil
 }
 
 // Allow checks if a single request is allowed.
@@ -54,14 +61,19 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 		return true, nil
 	}
 
-	storeKey := tb.storeKey(key)
+	var storeKey string
+	useNS := tb.nsStore != nil
+
+	if !useNS {
+		storeKey = tb.storeKey(key)
+	}
 
 	mu := tb.getLock(key)
 	mu.Lock()
 	defer mu.Unlock()
 
 	now := time.Now()
-	state := tb.getState(storeKey, now)
+	state := tb.getState(key, storeKey, useNS, now)
 
 	// Refill tokens based on time elapsed
 	elapsed := now.Sub(state.LastRefill)
@@ -77,12 +89,12 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 	// Check if we have enough tokens
 	if state.Tokens >= float64(n) {
 		state.Tokens -= float64(n)
-		tb.saveState(storeKey, state)
+		tb.saveState(key, storeKey, useNS, state)
 		return true, nil
 	}
 
 	// Not enough tokens, save state and reject
-	tb.saveState(storeKey, state)
+	tb.saveState(key, storeKey, useNS, state)
 	return false, nil
 }
 
@@ -91,6 +103,10 @@ func (tb *TokenBucket) Reset(key string) error {
 	mu := tb.getLock(key)
 	mu.Lock()
 	defer mu.Unlock()
+
+	if tb.nsStore != nil {
+		return tb.nsStore.DeleteWithNamespace("tb", key)
+	}
 	return tb.store.Delete(tb.storeKey(key))
 }
 
@@ -100,13 +116,28 @@ func (tb *TokenBucket) Remaining(key string) int {
 	mu.Lock()
 	defer mu.Unlock()
 
-	state := tb.getState(tb.storeKey(key), time.Now())
+	var storeKey string
+	useNS := tb.nsStore != nil
+	if !useNS {
+		storeKey = tb.storeKey(key)
+	}
+
+	state := tb.getState(key, storeKey, useNS, time.Now())
 	return int(state.Tokens)
 }
 
 // getState retrieves or initializes the token bucket state.
-func (tb *TokenBucket) getState(storeKey string, now time.Time) tokenBucketState {
-	if val, ok := tb.store.Get(storeKey); ok {
+func (tb *TokenBucket) getState(key, storeKey string, useNS bool, now time.Time) tokenBucketState {
+	var val interface{}
+	var ok bool
+
+	if useNS {
+		val, ok = tb.nsStore.GetWithNamespace("tb", key)
+	} else {
+		val, ok = tb.store.Get(storeKey)
+	}
+
+	if ok {
 		if state, ok := val.(tokenBucketState); ok {
 			return state
 		}
@@ -120,9 +151,13 @@ func (tb *TokenBucket) getState(storeKey string, now time.Time) tokenBucketState
 }
 
 // saveState persists the token bucket state.
-func (tb *TokenBucket) saveState(storeKey string, state tokenBucketState) {
+func (tb *TokenBucket) saveState(key, storeKey string, useNS bool, state tokenBucketState) {
 	// Store with a TTL of 2x the window to allow for cleanup
-	_ = tb.store.Set(storeKey, state, tb.config.Window*2)
+	if useNS {
+		_ = tb.nsStore.SetWithNamespace("tb", key, state, tb.config.Window*2)
+	} else {
+		_ = tb.store.Set(storeKey, state, tb.config.Window*2)
+	}
 }
 
 // storeKey generates the storage key for a rate limit key.
