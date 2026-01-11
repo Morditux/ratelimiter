@@ -17,3 +17,8 @@
 **Vulnerability:** `RateLimitMiddleware` treated all errors from `limiter.Allow` (including `ErrKeyTooLong` from the store) as system failures and failed open (allowed the request). This allowed attackers to bypass rate limiting by sending a key longer than `MaxKeySize`.
 **Learning:** Distinguish between "system errors" (DB down) and "input errors" (invalid key). Input errors must fail closed (block request) to prevent bypasses, while system errors might fail open for availability.
 **Prevention:** Check specific error types in middleware. If `errors.Is(err, store.ErrKeyTooLong)`, return 431 (Request Header Fields Too Large). For other errors, log and potentially allow.
+
+## 2024-10-24 - Fail Closed on Store Capacity
+**Vulnerability:** When the `MemoryStore` reached capacity (`MaxEntries`), it returned `ErrStoreFull`. The `TokenBucket` and `SlidingWindow` algorithms ignored this error when saving state, allowing requests to proceed without decrementing the quota. This allowed an attacker to bypass rate limits by filling the store with random keys.
+**Learning:** Rate limiting algorithms must check for storage errors. If the state cannot be persisted (e.g., tokens consumed), the request must be denied to prevent unauthorized usage (Fail Closed).
+**Prevention:** Modified `saveState` to return errors and updated `Allow` to return `false` if saving fails. Updated middleware to handle `ErrStoreFull` by returning 503 Service Unavailable.

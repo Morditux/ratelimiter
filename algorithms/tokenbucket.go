@@ -77,12 +77,18 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 	// Check if we have enough tokens
 	if state.Tokens >= float64(n) {
 		state.Tokens -= float64(n)
-		tb.saveState(storeKey, state)
+		if err := tb.saveState(storeKey, state); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 
 	// Not enough tokens, save state and reject
-	tb.saveState(storeKey, state)
+	// We ignore errors here because we are rejecting anyway,
+	// but strictly speaking if we fail to save the "rejection" state (e.g. updated timestamp)
+	// it might not matter as much as failing to save the "consumption" state.
+	// However, updating LastRefill is important.
+	_ = tb.saveState(storeKey, state)
 	return false, nil
 }
 
@@ -120,9 +126,9 @@ func (tb *TokenBucket) getState(storeKey string, now time.Time) tokenBucketState
 }
 
 // saveState persists the token bucket state.
-func (tb *TokenBucket) saveState(storeKey string, state tokenBucketState) {
+func (tb *TokenBucket) saveState(storeKey string, state tokenBucketState) error {
 	// Store with a TTL of 2x the window to allow for cleanup
-	_ = tb.store.Set(storeKey, state, tb.config.Window*2)
+	return tb.store.Set(storeKey, state, tb.config.Window*2)
 }
 
 // storeKey generates the storage key for a rate limit key.
