@@ -19,9 +19,10 @@ type slidingWindowState struct {
 // It provides a more accurate rate limit than fixed windows by considering
 // a weighted count from the previous window.
 type SlidingWindow struct {
-	config ratelimiter.Config
-	store  store.Store
-	mu     [shardCount]sync.Mutex // Sharded mutexes to reduce contention
+	config  ratelimiter.Config
+	store   store.Store
+	nsStore store.NamespacedStore
+	mu      [shardCount]sync.Mutex // Sharded mutexes to reduce contention
 }
 
 // NewSlidingWindow creates a new sliding window rate limiter.
@@ -30,10 +31,16 @@ func NewSlidingWindow(config ratelimiter.Config, s store.Store) (*SlidingWindow,
 		return nil, err
 	}
 
-	return &SlidingWindow{
+	sw := &SlidingWindow{
 		config: config,
 		store:  s,
-	}, nil
+	}
+
+	if ns, ok := s.(store.NamespacedStore); ok {
+		sw.nsStore = ns
+	}
+
+	return sw, nil
 }
 
 // Allow checks if a single request is allowed.
@@ -47,14 +54,18 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 		return true, nil
 	}
 
-	storeKey := sw.storeKey(key)
+	var storeKey string
+	useNS := sw.nsStore != nil
+	if !useNS {
+		storeKey = sw.storeKey(key)
+	}
 
 	mu := sw.getLock(key)
 	mu.Lock()
 	defer mu.Unlock()
 
 	now := time.Now()
-	state := sw.getState(storeKey, now)
+	state := sw.getState(key, storeKey, useNS, now)
 
 	// Calculate the weighted count
 	windowProgress := now.Sub(state.WindowStart).Seconds() / sw.config.Window.Seconds()
@@ -73,7 +84,7 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 
 	// Allow the request and increment the counter
 	state.CurrCount += n
-	if err := sw.saveState(storeKey, state); err != nil {
+	if err := sw.saveState(key, storeKey, useNS, state); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -84,6 +95,10 @@ func (sw *SlidingWindow) Reset(key string) error {
 	mu := sw.getLock(key)
 	mu.Lock()
 	defer mu.Unlock()
+
+	if sw.nsStore != nil {
+		return sw.nsStore.DeleteWithNamespace("sw", key)
+	}
 	return sw.store.Delete(sw.storeKey(key))
 }
 
@@ -93,7 +108,13 @@ func (sw *SlidingWindow) Remaining(key string) int {
 	mu.Lock()
 	defer mu.Unlock()
 
-	state := sw.getState(sw.storeKey(key), time.Now())
+	var storeKey string
+	useNS := sw.nsStore != nil
+	if !useNS {
+		storeKey = sw.storeKey(key)
+	}
+
+	state := sw.getState(key, storeKey, useNS, time.Now())
 
 	windowProgress := time.Since(state.WindowStart).Seconds() / sw.config.Window.Seconds()
 	if windowProgress > 1 {
@@ -111,8 +132,17 @@ func (sw *SlidingWindow) Remaining(key string) int {
 }
 
 // getState retrieves or initializes the sliding window state.
-func (sw *SlidingWindow) getState(storeKey string, now time.Time) slidingWindowState {
-	if val, ok := sw.store.Get(storeKey); ok {
+func (sw *SlidingWindow) getState(key, storeKey string, useNS bool, now time.Time) slidingWindowState {
+	var val interface{}
+	var ok bool
+
+	if useNS {
+		val, ok = sw.nsStore.GetWithNamespace("sw", key)
+	} else {
+		val, ok = sw.store.Get(storeKey)
+	}
+
+	if ok {
 		if state, ok := val.(slidingWindowState); ok {
 			// Check if we need to slide to a new window
 			elapsed := now.Sub(state.WindowStart)
@@ -146,8 +176,11 @@ func (sw *SlidingWindow) getState(storeKey string, now time.Time) slidingWindowS
 }
 
 // saveState persists the sliding window state.
-func (sw *SlidingWindow) saveState(storeKey string, state slidingWindowState) error {
+func (sw *SlidingWindow) saveState(key, storeKey string, useNS bool, state slidingWindowState) error {
 	// Store with a TTL of 3x the window to allow for proper sliding
+	if useNS {
+		return sw.nsStore.SetWithNamespace("sw", key, state, sw.config.Window*3)
+	}
 	return sw.store.Set(storeKey, state, sw.config.Window*3)
 }
 
