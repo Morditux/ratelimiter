@@ -89,12 +89,14 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 	// Check if we have enough tokens
 	if state.Tokens >= float64(n) {
 		state.Tokens -= float64(n)
-		tb.saveState(key, storeKey, useNS, state)
+		if err := tb.saveState(key, storeKey, useNS, state); err != nil {
+			return false, err
+		}
 		return true, nil
 	}
 
 	// Not enough tokens, save state and reject
-	tb.saveState(key, storeKey, useNS, state)
+	_ = tb.saveState(key, storeKey, useNS, state)
 	return false, nil
 }
 
@@ -151,13 +153,12 @@ func (tb *TokenBucket) getState(key, storeKey string, useNS bool, now time.Time)
 }
 
 // saveState persists the token bucket state.
-func (tb *TokenBucket) saveState(key, storeKey string, useNS bool, state tokenBucketState) {
+func (tb *TokenBucket) saveState(key, storeKey string, useNS bool, state tokenBucketState) error {
 	// Store with a TTL of 2x the window to allow for cleanup
 	if useNS {
-		_ = tb.nsStore.SetWithNamespace("tb", key, state, tb.config.Window*2)
-	} else {
-		_ = tb.store.Set(storeKey, state, tb.config.Window*2)
+		return tb.nsStore.SetWithNamespace("tb", key, state, tb.config.Window*2)
 	}
+	return tb.store.Set(storeKey, state, tb.config.Window*2)
 }
 
 // storeKey generates the storage key for a rate limit key.
