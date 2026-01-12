@@ -223,6 +223,14 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 					return
 				}
 
+				// FAIL SECURE: If the store is full, we must reject the request to prevent
+				// rate limit bypass. When the store is full, we cannot persist the state,
+				// so we cannot enforce the limit.
+				if errors.Is(err, store.ErrStoreFull) {
+					http.Error(w, "Rate limit store full", http.StatusServiceUnavailable)
+					return
+				}
+
 				// FAIL OPEN: Log error but allow request on other errors (e.g. redis down)
 				// This ensures system resilience.
 				next.ServeHTTP(w, r)
