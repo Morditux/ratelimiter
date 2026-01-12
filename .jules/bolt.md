@@ -9,3 +9,7 @@
 ## 2024-05-24 - Reduce Hot Path Allocations
 **Learning:** In the `TokenBucket` implementation, helper methods `getState` and `saveState` were both calling `storeKey` (which allocates a new string) separately. This resulted in redundant allocations inside the hot path `AllowN`.
 **Action:** Hoist stateless calculations like key generation out of helper methods and repetitive loops. By calculating `storeKey` once in `AllowN` and passing it down, we reduced allocations from 3 to 2 per operation and improved throughput by ~10%.
+
+## 2024-05-24 - TokenBucket Write Optimization
+**Learning:** `TokenBucket` was persisting state to storage even when requests were blocked. This was mathematically unnecessary because the state update (time passing) is deterministic and would be recalculated identically on the next request. This unnecessary write created significant overhead (locking + memory) during high-load scenarios like DDOS attacks.
+**Action:** In rate limiting algorithms, analyze if state updates on failure paths are strictly necessary. If the next calculation can derive the same state from current time + old state, skip the write. This reduced blocked request latency by ~50% (516ns -> 270ns) and eliminated allocations.

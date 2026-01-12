@@ -93,8 +93,9 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 		return true, nil
 	}
 
-	// Not enough tokens, save state and reject
-	tb.saveState(key, storeKey, useNS, state)
+	// Not enough tokens, reject without saving to reduce storage write load
+	// We don't need to save because the next calculation will be based on the same (or older) LastRefill,
+	// resulting in the same token count (clamped to burst size).
 	return false, nil
 }
 
