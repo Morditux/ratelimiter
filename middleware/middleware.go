@@ -250,9 +250,10 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 // matchPath checks if a request path matches a pattern.
 // Supports exact match and prefix match (pattern ending with *).
 func matchPath(path, pattern string) bool {
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(path, prefix)
+	// Optimization: manual check avoids overhead of strings.HasSuffix + strings.TrimSuffix
+	// This reduces CPU cycles on the hot path for every request.
+	if len(pattern) > 0 && pattern[len(pattern)-1] == '*' {
+		return strings.HasPrefix(path, pattern[:len(pattern)-1])
 	}
 	return path == pattern
 }
