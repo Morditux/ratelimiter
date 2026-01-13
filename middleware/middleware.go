@@ -252,7 +252,18 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 func matchPath(path, pattern string) bool {
 	if strings.HasSuffix(pattern, "*") {
 		prefix := strings.TrimSuffix(pattern, "*")
-		return strings.HasPrefix(path, prefix)
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+		// Also match the path without the trailing slash if the prefix ends with /
+		// e.g. /api/* (prefix /api/) should match /api
+		if strings.HasSuffix(prefix, "/") {
+			noSlash := strings.TrimSuffix(prefix, "/")
+			if path == noSlash {
+				return true
+			}
+		}
+		return false
 	}
 	return path == pattern
 }

@@ -235,6 +235,63 @@ func TestRouter_PrefixMatch(t *testing.T) {
 	}
 }
 
+func TestRouter_PathBypass(t *testing.T) {
+	s := store.NewMemoryStore()
+	defer s.Close()
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	router, err := NewRouter(handler, s, []EndpointConfig{
+		{
+			Path: "/api/protected/*",
+			Config: ratelimiter.Config{
+				Rate:   1, // Very strict
+				Window: time.Minute,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to create router: %v", err)
+	}
+	defer router.Close()
+
+	// 1. /api/protected/resource should be limited
+	// First request OK
+	req := httptest.NewRequest("GET", "/api/protected/resource", nil)
+	req.RemoteAddr = "192.168.1.1:12345"
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("First /api/protected/resource: expected 200, got %d", rec.Code)
+	}
+
+	// Second request BLOCKED
+	req = httptest.NewRequest("GET", "/api/protected/resource", nil)
+	req.RemoteAddr = "192.168.1.1:12345"
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("Second /api/protected/resource: expected 429, got %d", rec.Code)
+	}
+
+	// 2. /api/protected (the root of the wildcard) should ALSO be limited
+	// First request (matches the same bucket as above because bucket key uses config Path)
+	req = httptest.NewRequest("GET", "/api/protected", nil)
+	req.RemoteAddr = "192.168.1.1:12345"
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	// Since we already used the limit (1 request) for this endpoint/IP, it should be BLOCKED immediately.
+	if rec.Code == http.StatusOK {
+		t.Errorf("Security Vulnerability: /api/protected bypassed the rate limit for /api/protected/*")
+	} else if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("Unexpected status code: %d", rec.Code)
+	}
+}
+
 func TestRouter_UnmatchedPath(t *testing.T) {
 	s := store.NewMemoryStore()
 	defer s.Close()
