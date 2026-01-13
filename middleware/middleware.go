@@ -253,7 +253,19 @@ func matchPath(path, pattern string) bool {
 	// Optimization: manual check avoids overhead of strings.HasSuffix + strings.TrimSuffix
 	// This reduces CPU cycles on the hot path for every request.
 	if len(pattern) > 0 && pattern[len(pattern)-1] == '*' {
-		return strings.HasPrefix(path, pattern[:len(pattern)-1])
+		prefix := pattern[:len(pattern)-1]
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+		// Also match the path without the trailing slash if the prefix ends with /
+		// e.g. /api/* (prefix /api/) should match /api
+		if len(prefix) > 0 && prefix[len(prefix)-1] == '/' {
+			noSlash := prefix[:len(prefix)-1]
+			if path == noSlash {
+				return true
+			}
+		}
+		return false
 	}
 	return path == pattern
 }
