@@ -21,10 +21,11 @@ const shardCount = 256
 // Tokens are added at a steady rate and consumed by requests.
 // This allows for controlled bursting while maintaining an average rate.
 type TokenBucket struct {
-	config  ratelimiter.Config
-	store   store.Store
-	nsStore store.NamespacedStore
-	mu      [shardCount]sync.Mutex // Sharded mutexes to reduce contention
+	config     ratelimiter.Config
+	store      store.Store
+	nsStore    store.NamespacedStore
+	mu         [shardCount]sync.Mutex // Sharded mutexes to reduce contention
+	refillRate float64                // Pre-calculated tokens/sec to avoid repetitive division
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -39,8 +40,9 @@ func NewTokenBucket(config ratelimiter.Config, s store.Store) (*TokenBucket, err
 	}
 
 	tb := &TokenBucket{
-		config: config,
-		store:  s,
+		config:     config,
+		store:      s,
+		refillRate: float64(config.Rate) / config.Window.Seconds(),
 	}
 
 	if ns, ok := s.(store.NamespacedStore); ok {
@@ -77,8 +79,7 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 
 	// Refill tokens based on time elapsed
 	elapsed := now.Sub(state.LastRefill)
-	refillRate := float64(tb.config.Rate) / tb.config.Window.Seconds()
-	tokensToAdd := elapsed.Seconds() * refillRate
+	tokensToAdd := elapsed.Seconds() * tb.refillRate
 
 	state.Tokens += tokensToAdd
 	if state.Tokens > float64(tb.config.BurstSize) {

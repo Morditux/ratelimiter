@@ -19,10 +19,11 @@ type slidingWindowState struct {
 // It provides a more accurate rate limit than fixed windows by considering
 // a weighted count from the previous window.
 type SlidingWindow struct {
-	config  ratelimiter.Config
-	store   store.Store
-	nsStore store.NamespacedStore
-	mu      [shardCount]sync.Mutex // Sharded mutexes to reduce contention
+	config    ratelimiter.Config
+	store     store.Store
+	nsStore   store.NamespacedStore
+	mu        [shardCount]sync.Mutex // Sharded mutexes to reduce contention
+	invWindow float64                // Pre-calculated inverse window for faster multiplication
 }
 
 // NewSlidingWindow creates a new sliding window rate limiter.
@@ -32,8 +33,9 @@ func NewSlidingWindow(config ratelimiter.Config, s store.Store) (*SlidingWindow,
 	}
 
 	sw := &SlidingWindow{
-		config: config,
-		store:  s,
+		config:    config,
+		store:     s,
+		invWindow: 1.0 / config.Window.Seconds(),
 	}
 
 	if ns, ok := s.(store.NamespacedStore); ok {
@@ -68,7 +70,7 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 	state := sw.getState(key, storeKey, useNS, now)
 
 	// Calculate the weighted count
-	windowProgress := now.Sub(state.WindowStart).Seconds() / sw.config.Window.Seconds()
+	windowProgress := now.Sub(state.WindowStart).Seconds() * sw.invWindow
 	if windowProgress > 1 {
 		windowProgress = 1
 	}
@@ -116,7 +118,7 @@ func (sw *SlidingWindow) Remaining(key string) int {
 
 	state := sw.getState(key, storeKey, useNS, time.Now())
 
-	windowProgress := time.Since(state.WindowStart).Seconds() / sw.config.Window.Seconds()
+	windowProgress := time.Since(state.WindowStart).Seconds() * sw.invWindow
 	if windowProgress > 1 {
 		windowProgress = 1
 	}
