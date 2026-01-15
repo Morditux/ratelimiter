@@ -94,7 +94,22 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			allowed, err := ep.limiter.Allow(key)
 			if err != nil {
-				// Fail open on error
+				// FAIL SECURE: If the key is too long (likely an attack or misconfiguration),
+				// reject the request with 431 Request Header Fields Too Large.
+				if err == store.ErrKeyTooLong {
+					http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
+					return
+				}
+
+				// FAIL SECURE: If the store is full, we must reject the request to prevent
+				// rate limit bypass. When the store is full, we cannot persist the state,
+				// so we cannot enforce the limit.
+				if err == store.ErrStoreFull {
+					http.Error(w, "Rate limit store full", http.StatusServiceUnavailable)
+					return
+				}
+
+				// Fail open on other errors (e.g. redis down) to ensure system resilience
 				r.handler.ServeHTTP(w, req)
 				return
 			}

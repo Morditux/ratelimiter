@@ -22,3 +22,8 @@
 **Vulnerability:** `RateLimitMiddleware` failed open (allowed requests) when the store was full (`ErrStoreFull`). The rate limit algorithms (`TokenBucket`, `SlidingWindow`) ignored the error when saving state, allowing attackers to bypass rate limits by filling the store, as the limit counters were never persisted.
 **Learning:** Capacity errors (like storage full) must be treated as "Fail Closed" security events in rate limiters. If the system cannot record that a request happened, it cannot safely allow it.
 **Prevention:** Algorithms now propagate storage errors. Middleware explicitly checks for `store.ErrStoreFull` and returns 503 Service Unavailable, preventing bypass during DoS conditions while maintaining fail-open for other system errors.
+
+## 2024-10-25 - Inconsistent Fail Open Logic in Router
+**Vulnerability:** While `RateLimitMiddleware` was patched to fail closed on `ErrStoreFull` and `ErrKeyTooLong`, the `Router` middleware handler still failed open on all errors. This allowed attackers to bypass rate limits specifically on routed endpoints by triggering storage or key length errors.
+**Learning:** When multiple middleware components share logic (like handling rate limit results), security fixes must be applied to all of them. Inconsistent error handling across similar components creates hidden bypass vectors.
+**Prevention:** Ensure that all entry points (middleware, router, etc.) that enforce a security control handle failure modes consistently. Prefer shared helper functions for error handling logic to avoid duplication and drift.
