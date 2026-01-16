@@ -81,6 +81,12 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 
 	// Check if adding n requests would exceed the limit
 	if weightedCount+float64(n) > float64(sw.config.Rate) {
+		// Optimization: If we reject, we can just update the TTL to keep the key alive
+		// without writing the full state (which requires allocation).
+		// We only fall back to full save if UpdateTTL is not supported or fails.
+		if err := sw.updateTTL(key, storeKey, useNS); err != nil {
+			_ = sw.saveState(key, storeKey, useNS, state)
+		}
 		return false, nil
 	}
 
@@ -90,6 +96,22 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// updateTTL updates the expiration of the key without saving the state.
+func (sw *SlidingWindow) updateTTL(key, storeKey string, useNS bool) error {
+	ttl := sw.config.Window * 3
+	if useNS {
+		if ttlStore, ok := sw.nsStore.(store.NamespacedTTLStore); ok {
+			return ttlStore.UpdateTTLWithNamespace("sw", key, ttl)
+		}
+	} else {
+		if ttlStore, ok := sw.store.(store.TTLStore); ok {
+			return ttlStore.UpdateTTL(storeKey, ttl)
+		}
+	}
+	// Return error to trigger fallback to saveState
+	return ratelimiter.ErrNotSupported
 }
 
 // Reset clears the rate limit state for the given key.

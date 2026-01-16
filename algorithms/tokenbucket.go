@@ -97,7 +97,12 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 	}
 
 	// Not enough tokens, save state and reject
-	_ = tb.saveState(key, storeKey, useNS, state)
+	// Optimization: If we reject, we can just update the TTL to keep the key alive
+	// without writing the full state (which requires allocation).
+	// We only fall back to full save if UpdateTTL is not supported or fails.
+	if err := tb.updateTTL(key, storeKey, useNS); err != nil {
+		_ = tb.saveState(key, storeKey, useNS, state)
+	}
 	return false, nil
 }
 
@@ -160,6 +165,23 @@ func (tb *TokenBucket) saveState(key, storeKey string, useNS bool, state tokenBu
 		return tb.nsStore.SetWithNamespace("tb", key, state, tb.config.Window*2)
 	}
 	return tb.store.Set(storeKey, state, tb.config.Window*2)
+}
+
+// updateTTL updates the expiration of the key without saving the state.
+func (tb *TokenBucket) updateTTL(key, storeKey string, useNS bool) error {
+	ttl := tb.config.Window * 2
+	if useNS {
+		if ttlStore, ok := tb.nsStore.(store.NamespacedTTLStore); ok {
+			return ttlStore.UpdateTTLWithNamespace("tb", key, ttl)
+		}
+		// Fallback for stores that don't support NamespacedTTLStore but might support TTLStore (unlikely but possible)
+	} else {
+		if ttlStore, ok := tb.store.(store.TTLStore); ok {
+			return ttlStore.UpdateTTL(storeKey, ttl)
+		}
+	}
+	// Return error to trigger fallback to saveState
+	return ratelimiter.ErrNotSupported
 }
 
 // storeKey generates the storage key for a rate limit key.

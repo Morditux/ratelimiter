@@ -177,6 +177,37 @@ func (s *MemoryStore) DeleteWithNamespace(namespace, key string) error {
 	return nil
 }
 
+// UpdateTTL updates the expiration of a key without changing its value.
+func (s *MemoryStore) UpdateTTL(key string, ttl time.Duration) error {
+	return s.UpdateTTLWithNamespace("", key, ttl)
+}
+
+// UpdateTTLWithNamespace updates the expiration of a namespaced key without changing its value.
+func (s *MemoryStore) UpdateTTLWithNamespace(namespace, key string, ttl time.Duration) error {
+	if len(namespace)+len(key) > s.maxKeySize {
+		return ErrKeyTooLong
+	}
+
+	k := internalKey{ns: namespace, key: key}
+	shard := s.getShard(k)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	entry, exists := shard.entries[k]
+	if !exists {
+		// Key doesn't exist, cannot update TTL
+		return nil
+	}
+
+	if ttl > 0 {
+		entry.ExpiresAt = time.Now().Add(ttl)
+	} else {
+		entry.ExpiresAt = time.Time{}
+	}
+	shard.entries[k] = entry
+	return nil
+}
+
 // Close stops the cleanup routine and releases resources.
 func (s *MemoryStore) Close() error {
 	s.closeOnce.Do(func() {
