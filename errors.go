@@ -18,4 +18,7 @@ var (
 
 	// ErrKeyNotFound is returned when the key is not found in the store.
 	ErrKeyNotFound = errors.New("ratelimiter: key not found")
+
+	// ErrNotSupported is returned when an operation is not supported by the store.
+	ErrNotSupported = errors.New("ratelimiter: operation not supported")
 )
