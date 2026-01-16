@@ -27,3 +27,8 @@
 **Vulnerability:** While `RateLimitMiddleware` was patched to fail closed on `ErrStoreFull` and `ErrKeyTooLong`, the `Router` middleware handler still failed open on all errors. This allowed attackers to bypass rate limits specifically on routed endpoints by triggering storage or key length errors.
 **Learning:** When multiple middleware components share logic (like handling rate limit results), security fixes must be applied to all of them. Inconsistent error handling across similar components creates hidden bypass vectors.
 **Prevention:** Ensure that all entry points (middleware, router, etc.) that enforce a security control handle failure modes consistently. Prefer shared helper functions for error handling logic to avoid duplication and drift.
+
+## 2024-10-26 - Memory Exhaustion via Header Bombing
+**Vulnerability:** The `DefaultKeyFunc` and `TrustedIPKeyFunc` used `strings.Split` to parse the `X-Forwarded-For` header. An attacker could send a 1MB+ header filled with commas, causing the server to allocate massive string slices (8MB+ per request), leading to rapid Memory Exhaustion (DoS).
+**Learning:** Avoid `strings.Split` on untrusted input when only specific elements are needed. Standard string splitting allocates a slice for *every* delimiter, which creates an amplification vector.
+**Prevention:** Replaced `strings.Split` with manual iteration using `strings.IndexByte` (for first element) and a backwards loop (for trusted chain). This allows parsing arbitrary length headers with zero additional allocation.

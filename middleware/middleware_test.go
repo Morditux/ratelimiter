@@ -309,6 +309,84 @@ func TestDefaultKeyFunc_IPv6(t *testing.T) {
 	}
 }
 
+func TestDefaultKeyFunc_Complex(t *testing.T) {
+	tests := []struct {
+		name       string
+		xff        string
+		xri        string
+		remoteAddr string
+		expected   string
+	}{
+		{
+			name:       "Empty XFF first part",
+			xff:        ", 1.2.3.4",
+			xri:        "5.6.7.8",
+			remoteAddr: "9.9.9.9:1234",
+			expected:   "5.6.7.8", // XFF first part is empty, fallback to XRI
+		},
+		{
+			name:       "Whitespace XFF first part",
+			xff:        " , 1.2.3.4",
+			xri:        "5.6.7.8",
+			remoteAddr: "9.9.9.9:1234",
+			expected:   "5.6.7.8", // Trimmed is empty, fallback
+		},
+		{
+			name:       "Single IP",
+			xff:        "1.2.3.4",
+			xri:        "",
+			remoteAddr: "",
+			expected:   "1.2.3.4",
+		},
+		{
+			name:       "Single IP with whitespace",
+			xff:        " 1.2.3.4 ",
+			xri:        "",
+			remoteAddr: "",
+			expected:   "1.2.3.4",
+		},
+		{
+			name:       "Multiple IPs",
+			xff:        "1.2.3.4, 5.6.7.8",
+			xri:        "",
+			remoteAddr: "",
+			expected:   "1.2.3.4",
+		},
+		{
+			name:       "Empty XFF and XRI",
+			xff:        "",
+			xri:        "",
+			remoteAddr: "9.9.9.9:1234",
+			expected:   "9.9.9.9",
+		},
+		{
+			name: "All empty parts XFF",
+			xff: ", , ",
+			xri: "1.1.1.1",
+			remoteAddr: "2.2.2.2:22",
+			expected: "1.1.1.1",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/", nil)
+			if tc.xff != "" {
+				req.Header.Set("X-Forwarded-For", tc.xff)
+			}
+			if tc.xri != "" {
+				req.Header.Set("X-Real-IP", tc.xri)
+			}
+			req.RemoteAddr = tc.remoteAddr
+
+			key := DefaultKeyFunc(req)
+			if key != tc.expected {
+				t.Errorf("Expected %q, got %q", tc.expected, key)
+			}
+		})
+	}
+}
+
 func TestMatchPath_Exact(t *testing.T) {
 	if !matchPath("/health", "/health") {
 		t.Error("Exact match should return true")
