@@ -76,9 +76,13 @@ func WithIncludeMethods(methods ...string) Option {
 func DefaultKeyFunc(r *http.Request) string {
 	// Check X-Forwarded-For header (may contain multiple IPs)
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		ips := strings.Split(xff, ",")
-		if len(ips) > 0 {
-			if ip := strings.TrimSpace(ips[0]); ip != "" {
+		// Optimized to avoid strings.Split (memory DoS prevention)
+		if idx := strings.IndexByte(xff, ','); idx >= 0 {
+			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
+				return ip
+			}
+		} else {
+			if ip := strings.TrimSpace(xff); ip != "" {
 				return ip
 			}
 		}
@@ -119,20 +123,52 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 	return func(r *http.Request) string {
 		remoteIP := getRemoteIP(r)
 
-		// Collect all IPs: [...X-Forwarded-For, RemoteAddr]
-		var ips []string
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			for _, p := range parts {
-				ips = append(ips, strings.TrimSpace(p))
+		// 1. Check RemoteAddr first
+		ip := net.ParseIP(remoteIP)
+		if ip == nil {
+			// If RemoteAddr is invalid, we return it (as untrusted/raw)
+			// or fallback to XFF? Original logic appended it and skipped if nil.
+			// But if it's the only one, we return it.
+			return remoteIP
+		}
+
+		isTrusted := false
+		for _, cidr := range cidrs {
+			if cidr.Contains(ip) {
+				isTrusted = true
+				break
 			}
 		}
-		ips = append(ips, remoteIP)
 
-		// Iterate backwards
-		for i := len(ips) - 1; i >= 0; i-- {
-			ipStr := ips[i]
-			ip := net.ParseIP(ipStr)
+		if !isTrusted {
+			return remoteIP
+		}
+
+		// 2. RemoteAddr is trusted, check X-Forwarded-For backwards
+		xff := r.Header.Get("X-Forwarded-For")
+		if xff == "" {
+			return remoteIP
+		}
+
+		// Iterate backwards through XFF without allocating slice
+		idx := len(xff)
+		for idx > 0 {
+			prevComma := strings.LastIndexByte(xff[:idx], ',')
+			var part string
+			if prevComma == -1 {
+				part = xff[:idx]
+				idx = -1 // Stop after this
+			} else {
+				part = xff[prevComma+1 : idx]
+				idx = prevComma
+			}
+
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+
+			ip := net.ParseIP(part)
 			if ip == nil {
 				continue // Skip invalid IPs
 			}
@@ -146,15 +182,22 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 			}
 
 			if !isTrusted {
-				return ipStr
+				return part
 			}
 		}
 
-		// If all are trusted, return the first one (original client)
-		// or the last one if list is empty (shouldn't happen)
-		if len(ips) > 0 {
-			return ips[0]
+		// 3. If all are trusted, return the first IP (original client)
+		// Use optimized extraction for first IP
+		if idx := strings.IndexByte(xff, ','); idx >= 0 {
+			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
+				return ip
+			}
+		} else {
+			if ip := strings.TrimSpace(xff); ip != "" {
+				return ip
+			}
 		}
+
 		return remoteIP
 	}, nil
 }
