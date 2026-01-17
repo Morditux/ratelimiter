@@ -2,6 +2,7 @@
 package algorithms
 
 import (
+	"hash/maphash"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ type TokenBucket struct {
 	nsStore    store.NamespacedStore
 	mu         [shardCount]sync.Mutex // Sharded mutexes to reduce contention
 	refillRate float64                // Pre-calculated tokens/sec to avoid repetitive division
+	seed       maphash.Seed           // Seed for sharding hash
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -43,6 +45,7 @@ func NewTokenBucket(config ratelimiter.Config, s store.Store) (*TokenBucket, err
 		config:     config,
 		store:      s,
 		refillRate: float64(config.Rate) / config.Window.Seconds(),
+		seed:       maphash.MakeSeed(),
 	}
 
 	if ns, ok := s.(store.NamespacedStore); ok {
@@ -191,18 +194,9 @@ func (tb *TokenBucket) storeKey(key string) string {
 
 // getLock returns the mutex for the given key based on a hash.
 func (tb *TokenBucket) getLock(key string) *sync.Mutex {
-	idx := fnv32a(key) % shardCount
+	var h maphash.Hash
+	h.SetSeed(tb.seed)
+	h.WriteString(key)
+	idx := h.Sum64() % shardCount
 	return &tb.mu[idx]
-}
-
-// fnv32a is a local implementation of FNV-1a 32-bit hash to avoid allocation and imports
-func fnv32a(s string) uint32 {
-	const offset32 = 2166136261
-	const prime32 = 16777619
-	h := uint32(offset32)
-	for i := 0; i < len(s); i++ {
-		h ^= uint32(s[i])
-		h *= prime32
-	}
-	return h
 }

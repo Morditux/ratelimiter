@@ -1,6 +1,7 @@
 package algorithms
 
 import (
+	"hash/maphash"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ type SlidingWindow struct {
 	nsStore   store.NamespacedStore
 	mu        [shardCount]sync.Mutex // Sharded mutexes to reduce contention
 	invWindow float64                // Pre-calculated inverse window for faster multiplication
+	seed      maphash.Seed           // Seed for sharding hash
 }
 
 // NewSlidingWindow creates a new sliding window rate limiter.
@@ -36,6 +38,7 @@ func NewSlidingWindow(config ratelimiter.Config, s store.Store) (*SlidingWindow,
 		config:    config,
 		store:     s,
 		invWindow: 1.0 / config.Window.Seconds(),
+		seed:      maphash.MakeSeed(),
 	}
 
 	if ns, ok := s.(store.NamespacedStore); ok {
@@ -215,6 +218,9 @@ func (sw *SlidingWindow) storeKey(key string) string {
 
 // getLock returns the mutex for the given key based on a hash.
 func (sw *SlidingWindow) getLock(key string) *sync.Mutex {
-	idx := fnv32a(key) % shardCount
+	var h maphash.Hash
+	h.SetSeed(sw.seed)
+	h.WriteString(key)
+	idx := h.Sum64() % shardCount
 	return &sw.mu[idx]
 }
