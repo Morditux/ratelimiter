@@ -2,6 +2,7 @@
 package algorithms
 
 import (
+	"hash/maphash"
 	"sync"
 	"time"
 
@@ -34,7 +35,8 @@ type TokenBucket struct {
 	store      store.Store
 	nsStore    store.NamespacedStore
 	mu         [shardCount]paddedMutex // Sharded mutexes with padding to reduce contention
-	refillRate float64                // Pre-calculated tokens/sec to avoid repetitive division
+	refillRate float64                 // Pre-calculated tokens/sec to avoid repetitive division
+	seed       maphash.Seed            // Seed for sharding hash
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -52,6 +54,7 @@ func NewTokenBucket(config ratelimiter.Config, s store.Store) (*TokenBucket, err
 		config:     config,
 		store:      s,
 		refillRate: float64(config.Rate) / config.Window.Seconds(),
+		seed:       maphash.MakeSeed(),
 	}
 
 	if ns, ok := s.(store.NamespacedStore); ok {
@@ -200,7 +203,10 @@ func (tb *TokenBucket) storeKey(key string) string {
 
 // getLock returns the mutex for the given key based on a hash.
 func (tb *TokenBucket) getLock(key string) *sync.Mutex {
-	idx := fnv32a(key) % shardCount
+	var h maphash.Hash
+	h.SetSeed(tb.seed)
+	h.WriteString(key)
+	idx := h.Sum64() % shardCount
 	return &tb.mu[idx].Mutex
 }
 

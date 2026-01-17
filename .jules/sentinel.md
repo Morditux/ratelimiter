@@ -32,3 +32,8 @@
 **Vulnerability:** The `DefaultKeyFunc` and `TrustedIPKeyFunc` used `strings.Split` to parse the `X-Forwarded-For` header. An attacker could send a 1MB+ header filled with commas, causing the server to allocate massive string slices (8MB+ per request), leading to rapid Memory Exhaustion (DoS).
 **Learning:** Avoid `strings.Split` on untrusted input when only specific elements are needed. Standard string splitting allocates a slice for *every* delimiter, which creates an amplification vector.
 **Prevention:** Replaced `strings.Split` with manual iteration using `strings.IndexByte` (for first element) and a backwards loop (for trusted chain). This allows parsing arbitrary length headers with zero additional allocation.
+
+## 2024-10-27 - Hash DoS on Sharding
+**Vulnerability:** `MemoryStore`, `TokenBucket`, and `SlidingWindow` used `FNV-1a` (a non-cryptographic, unseeded hash) to map keys to shards/mutexes. An attacker could craft keys (e.g., via spoofed IPs) to target a specific shard, causing lock contention and degrading performance (Hash DoS).
+**Learning:** Deterministic sharding functions without random seeds are vulnerable to collision attacks. Even if the underlying map is secure (Go maps are), the sharding layer itself can be a bottleneck if targeted.
+**Prevention:** Replaced `FNV-1a` with `hash/maphash`, which provides a cryptographically secure, randomized seed per instance/process. This ensures that key-to-shard mapping is unpredictable to attackers.
