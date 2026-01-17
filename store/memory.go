@@ -1,6 +1,7 @@
 package store
 
 import (
+	"hash/maphash"
 	"sync"
 	"time"
 )
@@ -25,6 +26,7 @@ type MemoryStore struct {
 	closeOnce    sync.Once
 	maxShardSize int
 	maxKeySize   int
+	seed         maphash.Seed
 }
 
 // MemoryStoreConfig holds configuration for MemoryStore.
@@ -69,6 +71,7 @@ func NewMemoryStoreWithConfig(config MemoryStoreConfig) *MemoryStore {
 	s := &MemoryStore{
 		stopChan:   make(chan struct{}),
 		maxKeySize: config.MaxKeySize,
+		seed:       maphash.MakeSeed(),
 	}
 
 	// Calculate approximate per-shard limit
@@ -264,34 +267,10 @@ func (s *MemoryStore) cleanupShard(shard *shard) {
 
 // getShard returns the shard for the given key.
 func (s *MemoryStore) getShard(k internalKey) *shard {
-	idx := fnv32aPair(k.ns, k.key) % shardCount
+	var h maphash.Hash
+	h.SetSeed(s.seed)
+	h.WriteString(k.ns)
+	h.WriteString(k.key)
+	idx := h.Sum64() % shardCount
 	return s.shards[idx]
-}
-
-// fnv32aPair hashes two strings as if they were concatenated
-func fnv32aPair(a, b string) uint32 {
-	const offset32 = 2166136261
-	const prime32 = 16777619
-	h := uint32(offset32)
-	for i := 0; i < len(a); i++ {
-		h ^= uint32(a[i])
-		h *= prime32
-	}
-	for i := 0; i < len(b); i++ {
-		h ^= uint32(b[i])
-		h *= prime32
-	}
-	return h
-}
-
-// fnv32a is a local implementation of FNV-1a 32-bit hash
-func fnv32a(s string) uint32 {
-	const offset32 = 2166136261
-	const prime32 = 16777619
-	h := uint32(offset32)
-	for i := 0; i < len(s); i++ {
-		h ^= uint32(s[i])
-		h *= prime32
-	}
-	return h
 }
