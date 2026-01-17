@@ -22,8 +22,8 @@ type SlidingWindow struct {
 	config    ratelimiter.Config
 	store     store.Store
 	nsStore   store.NamespacedStore
-	mu        [shardCount]sync.Mutex // Sharded mutexes to reduce contention
-	invWindow float64                // Pre-calculated inverse window for faster multiplication
+	mu        [shardCount]paddedMutex // Sharded mutexes with padding
+	invWindow float64                 // Pre-calculated inverse window for faster multiplication
 }
 
 // NewSlidingWindow creates a new sliding window rate limiter.
@@ -216,5 +216,5 @@ func (sw *SlidingWindow) storeKey(key string) string {
 // getLock returns the mutex for the given key based on a hash.
 func (sw *SlidingWindow) getLock(key string) *sync.Mutex {
 	idx := fnv32a(key) % shardCount
-	return &sw.mu[idx]
+	return &sw.mu[idx].Mutex
 }

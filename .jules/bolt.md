@@ -13,3 +13,7 @@
 ## 2024-05-24 - Pre-calculate Invariants
 **Learning:** In high-frequency hot paths like rate limiting checks (AllowN), repeated floating point divisions (e.g., rate / window) add measurable overhead. Pre-calculating these as multiplicative inverses or rates during initialization yields a consistent 2-5% CPU reduction.
 **Action:** Identify loop-invariant calculations in hot paths. Move them to struct initialization and store them as fields (e.g., refillRate, invWindow).
+
+## 2024-05-24 - False Sharing in Sharded Locks
+**Learning:** Using arrays of standard synchronization primitives (like `[256]sync.Mutex`) introduces "false sharing," where multiple locks reside on the same CPU cache line (typically 64 bytes). This causes cache invalidation storms when concurrent goroutines lock adjacent shards, even if they are logically distinct. Benchmarks showed adjacent shards were ~44% slower (223ns vs 125ns) than spaced shards.
+**Action:** When using arrays of locks or frequently modified small structs, ensure they are padded to the CPU cache line size (usually 64 bytes). Introduced `paddedMutex` and padded `shard` structs to eliminate this contention, bringing performance of adjacent shards to parity with spaced shards.

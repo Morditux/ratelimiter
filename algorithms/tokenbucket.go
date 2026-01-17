@@ -17,6 +17,15 @@ type tokenBucketState struct {
 
 const shardCount = 256
 
+// paddedMutex wraps a sync.Mutex with padding to prevent false sharing.
+// Standard CPU cache line is 64 bytes.
+// sync.Mutex is 8 bytes on 64-bit systems.
+// We add 56 bytes of padding to ensure each mutex occupies its own cache line.
+type paddedMutex struct {
+	sync.Mutex
+	_ [56]byte
+}
+
 // TokenBucket implements the token bucket rate limiting algorithm.
 // Tokens are added at a steady rate and consumed by requests.
 // This allows for controlled bursting while maintaining an average rate.
@@ -24,7 +33,7 @@ type TokenBucket struct {
 	config     ratelimiter.Config
 	store      store.Store
 	nsStore    store.NamespacedStore
-	mu         [shardCount]sync.Mutex // Sharded mutexes to reduce contention
+	mu         [shardCount]paddedMutex // Sharded mutexes with padding to reduce contention
 	refillRate float64                // Pre-calculated tokens/sec to avoid repetitive division
 }
 
@@ -192,7 +201,7 @@ func (tb *TokenBucket) storeKey(key string) string {
 // getLock returns the mutex for the given key based on a hash.
 func (tb *TokenBucket) getLock(key string) *sync.Mutex {
 	idx := fnv32a(key) % shardCount
-	return &tb.mu[idx]
+	return &tb.mu[idx].Mutex
 }
 
 // fnv32a is a local implementation of FNV-1a 32-bit hash to avoid allocation and imports
