@@ -214,6 +214,8 @@ func getRemoteIP(r *http.Request) string {
 // DefaultOnLimited returns a 429 response with a JSON body.
 func DefaultOnLimited(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Retry-After", "60")
 	w.WriteHeader(http.StatusTooManyRequests)
 	w.Write([]byte(`{"error":"rate limit exceeded","message":"too many requests, please try again later"}`))
