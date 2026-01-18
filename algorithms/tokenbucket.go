@@ -25,9 +25,9 @@ type TokenBucket struct {
 	config     ratelimiter.Config
 	store      store.Store
 	nsStore    store.NamespacedStore
-	mu         [shardCount]sync.Mutex // Sharded mutexes to reduce contention
-	refillRate float64                // Pre-calculated tokens/sec to avoid repetitive division
-	seed       maphash.Seed           // Seed for sharding hash
+	mu         [shardCount]paddedMutex // Sharded mutexes to reduce contention
+	refillRate float64                 // Pre-calculated tokens/sec to avoid repetitive division
+	seed       maphash.Seed            // Seed for sharding hash
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -198,5 +198,5 @@ func (tb *TokenBucket) getLock(key string) *sync.Mutex {
 	h.SetSeed(tb.seed)
 	h.WriteString(key)
 	idx := h.Sum64() % shardCount
-	return &tb.mu[idx]
+	return &tb.mu[idx].Mutex
 }
