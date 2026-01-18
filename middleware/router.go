@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/Morditux/ratelimiter"
@@ -96,7 +97,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if err != nil {
 				// FAIL SECURE: If the key is too long (likely an attack or misconfiguration),
 				// reject the request with 431 Request Header Fields Too Large.
-				if err == store.ErrKeyTooLong {
+				if errors.Is(err, store.ErrKeyTooLong) {
 					http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
 					return
 				}
@@ -104,7 +105,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				// FAIL SECURE: If the store is full, we must reject the request to prevent
 				// rate limit bypass. When the store is full, we cannot persist the state,
 				// so we cannot enforce the limit.
-				if err == store.ErrStoreFull {
+				if errors.Is(err, store.ErrStoreFull) {
 					http.Error(w, "Rate limit store full", http.StatusServiceUnavailable)
 					return
 				}
