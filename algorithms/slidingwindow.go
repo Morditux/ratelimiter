@@ -23,9 +23,9 @@ type SlidingWindow struct {
 	config    ratelimiter.Config
 	store     store.Store
 	nsStore   store.NamespacedStore
-	mu        [shardCount]sync.Mutex // Sharded mutexes to reduce contention
-	invWindow float64                // Pre-calculated inverse window for faster multiplication
-	seed      maphash.Seed           // Seed for sharding hash
+	mu        [shardCount]paddedMutex // Sharded mutexes to reduce contention
+	invWindow float64                 // Pre-calculated inverse window for faster multiplication
+	seed      maphash.Seed            // Seed for sharding hash
 }
 
 // NewSlidingWindow creates a new sliding window rate limiter.
@@ -222,5 +222,5 @@ func (sw *SlidingWindow) getLock(key string) *sync.Mutex {
 	h.SetSeed(sw.seed)
 	h.WriteString(key)
 	idx := h.Sum64() % shardCount
-	return &sw.mu[idx]
+	return &sw.mu[idx].Mutex
 }
