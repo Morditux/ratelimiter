@@ -13,3 +13,7 @@
 ## 2024-05-24 - Pre-calculate Invariants
 **Learning:** In high-frequency hot paths like rate limiting checks (AllowN), repeated floating point divisions (e.g., rate / window) add measurable overhead. Pre-calculating these as multiplicative inverses or rates during initialization yields a consistent 2-5% CPU reduction.
 **Action:** Identify loop-invariant calculations in hot paths. Move them to struct initialization and store them as fields (e.g., refillRate, invWindow).
+
+## 2024-05-25 - Zero-Allocation IP Extraction
+**Learning:** The standard library's `net.SplitHostPort` is robust but allocates strings on every call. In high-throughput middleware hot paths (like key extraction), replacing it with manual string slicing (using `IndexByte`/`LastIndexByte`) yielded a ~2-4x speedup (25ns -> 6ns) and eliminated allocations entirely for common IPv4/IPv6 cases.
+**Action:** For string parsing in hot paths where input format is predictable (like `RemoteAddr` from `http.Server`), prefer direct string manipulation/slicing over generic standard library parsers to avoid allocations.
