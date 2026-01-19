@@ -37,3 +37,8 @@
 **Vulnerability:** `MemoryStore`, `TokenBucket`, and `SlidingWindow` used `FNV-1a` (a non-cryptographic, unseeded hash) to map keys to shards/mutexes. An attacker could craft keys (e.g., via spoofed IPs) to target a specific shard, causing lock contention and degrading performance (Hash DoS).
 **Learning:** Deterministic sharding functions without random seeds are vulnerable to collision attacks. Even if the underlying map is secure (Go maps are), the sharding layer itself can be a bottleneck if targeted.
 **Prevention:** Replaced `FNV-1a` with `hash/maphash`, which provides a cryptographically secure, randomized seed per instance/process. This ensures that key-to-shard mapping is unpredictable to attackers.
+
+## 2024-10-28 - Missing Security Headers in Error Responses
+**Vulnerability:** Rate limit error responses (429) lacked basic security headers like `Content-Security-Policy` and `Referrer-Policy`. While the response body is JSON, the absence of these headers reduced defense-in-depth against potential content sniffing or context confusion attacks.
+**Learning:** Security headers should be applied to *all* responses, including error pages. Defense in depth requires assuming that even simple error responses might be mishandled by some clients.
+**Prevention:** Enhanced `DefaultOnLimited` to include `Content-Security-Policy: default-src 'none'`, `Referrer-Policy: no-referrer`, and `Permissions-Policy`.
