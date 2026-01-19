@@ -204,11 +204,40 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 
 // getRemoteIP extracts the IP from RemoteAddr, handling IPv6 brackets and ports.
 func getRemoteIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
+	remoteAddr := r.RemoteAddr
+	if len(remoteAddr) == 0 {
+		return remoteAddr
 	}
-	return r.RemoteAddr
+
+	// IPv6 with port [::1]:8080
+	if remoteAddr[0] == '[' {
+		// Find the closing bracket
+		end := strings.IndexByte(remoteAddr, ']')
+		if end < 0 {
+			return remoteAddr // Malformed
+		}
+		// Check for colon after bracket
+		if end+1 < len(remoteAddr) && remoteAddr[end+1] == ':' {
+			return remoteAddr[1:end]
+		}
+		// No port or malformed, return original to match net.SplitHostPort behavior
+		return remoteAddr
+	}
+
+	// IPv4 with port 1.2.3.4:8080
+	// Check for multiple colons (IPv6 without brackets)
+	firstColon := strings.IndexByte(remoteAddr, ':')
+	if firstColon != -1 {
+		lastColon := strings.LastIndexByte(remoteAddr, ':')
+		if firstColon == lastColon {
+			// Exactly one colon, treat as Host:Port
+			return remoteAddr[:lastColon]
+		}
+		// Multiple colons -> IPv6 without brackets or malformed
+		// Return original to match net.SplitHostPort behavior (which errors on this)
+	}
+
+	return remoteAddr
 }
 
 // DefaultOnLimited returns a 429 response with a JSON body.
