@@ -79,18 +79,18 @@ func DefaultKeyFunc(r *http.Request) string {
 		// Optimized to avoid strings.Split (memory DoS prevention)
 		if idx := strings.IndexByte(xff, ','); idx >= 0 {
 			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
-				return ip
+				return stripIPPort(ip)
 			}
 		} else {
 			if ip := strings.TrimSpace(xff); ip != "" {
-				return ip
+				return stripIPPort(ip)
 			}
 		}
 	}
 
 	// Check X-Real-IP header
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return xri
+		return stripIPPort(xri)
 	}
 
 	return getRemoteIP(r)
@@ -204,40 +204,42 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 
 // getRemoteIP extracts the IP from RemoteAddr, handling IPv6 brackets and ports.
 func getRemoteIP(r *http.Request) string {
-	remoteAddr := r.RemoteAddr
-	if len(remoteAddr) == 0 {
-		return remoteAddr
+	return stripIPPort(r.RemoteAddr)
+}
+
+// stripIPPort removes the port from an IP address if present.
+// It handles IPv6 brackets and ensures only the IP is returned.
+func stripIPPort(addr string) string {
+	if len(addr) == 0 {
+		return addr
 	}
 
-	// IPv6 with port [::1]:8080
-	if remoteAddr[0] == '[' {
+	// IPv6 with port [::1]:8080 or just [::1]
+	if addr[0] == '[' {
 		// Find the closing bracket
-		end := strings.IndexByte(remoteAddr, ']')
+		end := strings.IndexByte(addr, ']')
 		if end < 0 {
-			return remoteAddr // Malformed
+			return addr // Malformed
 		}
-		// Check for colon after bracket
-		if end+1 < len(remoteAddr) && remoteAddr[end+1] == ':' {
-			return remoteAddr[1:end]
-		}
-		// No port or malformed, return original to match net.SplitHostPort behavior
-		return remoteAddr
+		// Return content inside brackets (canonicalize to IP)
+		// e.g. [::1] -> ::1
+		return addr[1:end]
 	}
 
 	// IPv4 with port 1.2.3.4:8080
 	// Check for multiple colons (IPv6 without brackets)
-	firstColon := strings.IndexByte(remoteAddr, ':')
+	firstColon := strings.IndexByte(addr, ':')
 	if firstColon != -1 {
-		lastColon := strings.LastIndexByte(remoteAddr, ':')
+		lastColon := strings.LastIndexByte(addr, ':')
 		if firstColon == lastColon {
 			// Exactly one colon, treat as Host:Port
-			return remoteAddr[:lastColon]
+			return addr[:lastColon]
 		}
 		// Multiple colons -> IPv6 without brackets or malformed
-		// Return original to match net.SplitHostPort behavior (which errors on this)
+		// Return original to match net.SplitHostPort behavior
 	}
 
-	return remoteAddr
+	return addr
 }
 
 // DefaultOnLimited returns a 429 response with a JSON body.
