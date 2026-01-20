@@ -22,12 +22,12 @@ const shardCount = 256
 // Tokens are added at a steady rate and consumed by requests.
 // This allows for controlled bursting while maintaining an average rate.
 type TokenBucket struct {
-	config     ratelimiter.Config
-	store      store.Store
-	nsStore    store.NamespacedStore
-	mu         [shardCount]paddedMutex // Sharded mutexes to reduce contention
-	refillRate float64                 // Pre-calculated tokens/sec to avoid repetitive division
-	seed       maphash.Seed            // Seed for sharding hash
+	config        ratelimiter.Config
+	store         store.Store
+	nsStore       store.NamespacedStore
+	mu            [shardCount]paddedMutex // Sharded mutexes to reduce contention
+	tokensPerNano float64                 // Pre-calculated tokens/ns to avoid repetitive division
+	seed          maphash.Seed            // Seed for sharding hash
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -41,11 +41,16 @@ func NewTokenBucket(config ratelimiter.Config, s store.Store) (*TokenBucket, err
 		config.BurstSize = config.Rate
 	}
 
+	// Calculate tokens per nanosecond
+	// Rate is tokens/window. Window is duration.
+	// tokensPerNano = Rate / Window.Nanoseconds()
+	tokensPerNano := float64(config.Rate) / float64(config.Window.Nanoseconds())
+
 	tb := &TokenBucket{
-		config:     config,
-		store:      s,
-		refillRate: float64(config.Rate) / config.Window.Seconds(),
-		seed:       maphash.MakeSeed(),
+		config:        config,
+		store:         s,
+		tokensPerNano: tokensPerNano,
+		seed:          maphash.MakeSeed(),
 	}
 
 	if ns, ok := s.(store.NamespacedStore); ok {
@@ -82,7 +87,8 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 
 	// Refill tokens based on time elapsed
 	elapsed := now.Sub(state.LastRefill)
-	tokensToAdd := elapsed.Seconds() * tb.refillRate
+	// Optimization: Use multiplication instead of Duration.Seconds() which involves division
+	tokensToAdd := float64(elapsed) * tb.tokensPerNano
 
 	state.Tokens += tokensToAdd
 	if state.Tokens > float64(tb.config.BurstSize) {
