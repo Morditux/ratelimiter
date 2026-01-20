@@ -42,3 +42,8 @@
 **Vulnerability:** Rate limit error responses (429) lacked basic security headers like `Content-Security-Policy` and `Referrer-Policy`. While the response body is JSON, the absence of these headers reduced defense-in-depth against potential content sniffing or context confusion attacks.
 **Learning:** Security headers should be applied to *all* responses, including error pages. Defense in depth requires assuming that even simple error responses might be mishandled by some clients.
 **Prevention:** Enhanced `DefaultOnLimited` to include `Content-Security-Policy: default-src 'none'`, `Referrer-Policy: no-referrer`, and `Permissions-Policy`.
+
+## 2024-10-31 - Rate Limit Bypass via Port Rotation
+**Vulnerability:** `DefaultKeyFunc` used the raw value of `X-Forwarded-For` or `X-Real-IP` as the rate limit key. If a proxy (or attacker) included a port in these headers (e.g., `1.2.3.4:12345`), the rate limiter treated it as a unique key. Attackers could bypass limits by rotating source ports for every request.
+**Learning:** IP address strings from headers or `RemoteAddr` are not guaranteed to be just IPs; they often contain ports. Blindly trusting them as "unique user identifiers" allows trivial bypasses.
+**Prevention:** Always canonicalize IP addresses by stripping ports and brackets before using them as keys. Implemented `stripIPPort` to enforce this normalization across all IP extraction paths.
