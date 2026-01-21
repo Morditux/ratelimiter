@@ -47,3 +47,8 @@
 **Vulnerability:** `DefaultKeyFunc` used the raw value of `X-Forwarded-For` or `X-Real-IP` as the rate limit key. If a proxy (or attacker) included a port in these headers (e.g., `1.2.3.4:12345`), the rate limiter treated it as a unique key. Attackers could bypass limits by rotating source ports for every request.
 **Learning:** IP address strings from headers or `RemoteAddr` are not guaranteed to be just IPs; they often contain ports. Blindly trusting them as "unique user identifiers" allows trivial bypasses.
 **Prevention:** Always canonicalize IP addresses by stripping ports and brackets before using them as keys. Implemented `stripIPPort` to enforce this normalization across all IP extraction paths.
+
+## 2024-11-01 - Header Splitting Bypass
+**Vulnerability:** `TrustedIPKeyFunc` retrieved only the first `X-Forwarded-For` header using `r.Header.Get()`, ignoring subsequent headers added by trusted proxies when header splitting occurred (e.g., via `Header.Add` instead of appending). This allowed attackers to spoof their IP by sending a fake header that shadowed the real one.
+**Learning:** HTTP headers can be multi-valued. Using `Get()` (which returns only the first value) on headers like `X-Forwarded-For` that form a chain is dangerous if the chain is split across multiple header lines.
+**Prevention:** Updated `TrustedIPKeyFunc` to use `r.Header.Values()` and iterate backwards through *all* header values to correctly reconstruct the trust chain, ensuring the true client IP (or last untrusted hop) is identified.

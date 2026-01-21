@@ -145,55 +145,61 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 		}
 
 		// 2. RemoteAddr is trusted, check X-Forwarded-For backwards
-		xff := r.Header.Get("X-Forwarded-For")
-		if xff == "" {
+		// Handle multiple X-Forwarded-For headers by checking all values
+		xffHeaders := r.Header.Values("X-Forwarded-For")
+		if len(xffHeaders) == 0 {
 			return remoteIP
 		}
 
-		// Iterate backwards through XFF without allocating slice
-		idx := len(xff)
-		for idx > 0 {
-			prevComma := strings.LastIndexByte(xff[:idx], ',')
-			var part string
-			if prevComma == -1 {
-				part = xff[:idx]
-				idx = -1 // Stop after this
-			} else {
-				part = xff[prevComma+1 : idx]
-				idx = prevComma
-			}
-
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-
-			ip := net.ParseIP(part)
-			if ip == nil {
-				continue // Skip invalid IPs
-			}
-
-			isTrusted := false
-			for _, cidr := range cidrs {
-				if cidr.Contains(ip) {
-					isTrusted = true
-					break
+		// Iterate backwards through all XFF headers (starting from the last header)
+		for i := len(xffHeaders) - 1; i >= 0; i-- {
+			xff := xffHeaders[i]
+			// Iterate backwards through the current XFF header string
+			idx := len(xff)
+			for idx > 0 {
+				prevComma := strings.LastIndexByte(xff[:idx], ',')
+				var part string
+				if prevComma == -1 {
+					part = xff[:idx]
+					idx = -1 // Stop after this in current header
+				} else {
+					part = xff[prevComma+1 : idx]
+					idx = prevComma
 				}
-			}
 
-			if !isTrusted {
-				return part
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+
+				ip := net.ParseIP(part)
+				if ip == nil {
+					continue // Skip invalid IPs
+				}
+
+				isTrusted := false
+				for _, cidr := range cidrs {
+					if cidr.Contains(ip) {
+						isTrusted = true
+						break
+					}
+				}
+
+				if !isTrusted {
+					return part
+				}
 			}
 		}
 
 		// 3. If all are trusted, return the first IP (original client)
-		// Use optimized extraction for first IP
-		if idx := strings.IndexByte(xff, ','); idx >= 0 {
-			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
+		// Use optimized extraction for first IP from the first header
+		firstHeader := xffHeaders[0]
+		if idx := strings.IndexByte(firstHeader, ','); idx >= 0 {
+			if ip := strings.TrimSpace(firstHeader[:idx]); ip != "" {
 				return ip
 			}
 		} else {
-			if ip := strings.TrimSpace(xff); ip != "" {
+			if ip := strings.TrimSpace(firstHeader); ip != "" {
 				return ip
 			}
 		}
