@@ -52,3 +52,8 @@
 **Vulnerability:** `TrustedIPKeyFunc` retrieved only the first `X-Forwarded-For` header using `r.Header.Get()`, ignoring subsequent headers added by trusted proxies when header splitting occurred (e.g., via `Header.Add` instead of appending). This allowed attackers to spoof their IP by sending a fake header that shadowed the real one.
 **Learning:** HTTP headers can be multi-valued. Using `Get()` (which returns only the first value) on headers like `X-Forwarded-For` that form a chain is dangerous if the chain is split across multiple header lines.
 **Prevention:** Updated `TrustedIPKeyFunc` to use `r.Header.Values()` and iterate backwards through *all* header values to correctly reconstruct the trust chain, ensuring the true client IP (or last untrusted hop) is identified.
+
+## 2024-12-05 - Storage Exhaustion via Garbage Keys
+**Vulnerability:** `DefaultKeyFunc` blindly accepted arbitrary strings from `X-Forwarded-For` and `X-Real-IP` as rate limit keys. An attacker could send requests with random strings in these headers, causing the `MemoryStore` to fill up with unique garbage keys, eventually triggering `ErrStoreFull` and causing a Denial of Service for legitimate users.
+**Learning:** When using external input (like headers) as keys for limited resources (storage), stricter validation is required. Trusting that input "looks like" an IP isn't enough; explicit validation ensures the keyspace is bounded to the expected domain.
+**Prevention:** Added `net.ParseIP` validation to `DefaultKeyFunc`. If the extracted value is not a valid IP address, it is ignored, and the function falls back to a safer source (like `RemoteAddr`), preventing the injection of arbitrary strings into the store.

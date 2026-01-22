@@ -72,6 +72,8 @@ func WithIncludeMethods(methods ...string) Option {
 // DefaultKeyFunc extracts the client IP from the request.
 // It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
 // Note: This function blindly trusts X-Forwarded-For, which can be spoofed.
+// It validates that the extracted value is a valid IP address to prevent
+// storage exhaustion attacks with garbage keys.
 // Use TrustedIPKeyFunc for a secure alternative when behind a proxy.
 func DefaultKeyFunc(r *http.Request) string {
 	// Check X-Forwarded-For header (may contain multiple IPs)
@@ -79,18 +81,27 @@ func DefaultKeyFunc(r *http.Request) string {
 		// Optimized to avoid strings.Split (memory DoS prevention)
 		if idx := strings.IndexByte(xff, ','); idx >= 0 {
 			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
-				return stripIPPort(ip)
+				cleanIP := stripIPPort(ip)
+				if net.ParseIP(cleanIP) != nil {
+					return cleanIP
+				}
 			}
 		} else {
 			if ip := strings.TrimSpace(xff); ip != "" {
-				return stripIPPort(ip)
+				cleanIP := stripIPPort(ip)
+				if net.ParseIP(cleanIP) != nil {
+					return cleanIP
+				}
 			}
 		}
 	}
 
 	// Check X-Real-IP header
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return stripIPPort(xri)
+		cleanIP := stripIPPort(xri)
+		if net.ParseIP(cleanIP) != nil {
+			return cleanIP
+		}
 	}
 
 	return getRemoteIP(r)
