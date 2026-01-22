@@ -144,7 +144,8 @@ func (tb *TokenBucket) Remaining(key string) int {
 }
 
 // getState retrieves or initializes the token bucket state.
-func (tb *TokenBucket) getState(key, storeKey string, useNS bool, now time.Time) tokenBucketState {
+// Optimization: Returns a pointer to avoid allocation when updating state in MemoryStore.
+func (tb *TokenBucket) getState(key, storeKey string, useNS bool, now time.Time) *tokenBucketState {
 	var val interface{}
 	var ok bool
 
@@ -155,20 +156,26 @@ func (tb *TokenBucket) getState(key, storeKey string, useNS bool, now time.Time)
 	}
 
 	if ok {
-		if state, ok := val.(tokenBucketState); ok {
+		// Fast path: pointer (zero allocation for MemoryStore updates)
+		if state, ok := val.(*tokenBucketState); ok {
 			return state
+		}
+		// Fallback: value (handles migration or stores that return by value)
+		if state, ok := val.(tokenBucketState); ok {
+			return &state
 		}
 	}
 
 	// Initialize with full tokens
-	return tokenBucketState{
+	return &tokenBucketState{
 		Tokens:     float64(tb.config.BurstSize),
 		LastRefill: now,
 	}
 }
 
 // saveState persists the token bucket state.
-func (tb *TokenBucket) saveState(key, storeKey string, useNS bool, state tokenBucketState) error {
+// Optimization: Takes a pointer to support zero-allocation updates in MemoryStore.
+func (tb *TokenBucket) saveState(key, storeKey string, useNS bool, state *tokenBucketState) error {
 	// Store with a TTL of 2x the window to allow for cleanup
 	if useNS {
 		return tb.nsStore.SetWithNamespace("tb", key, state, tb.config.Window*2)
