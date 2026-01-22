@@ -17,3 +17,7 @@
 ## 2024-05-25 - Zero-Allocation IP Extraction
 **Learning:** The standard library's `net.SplitHostPort` is robust but allocates strings on every call. In high-throughput middleware hot paths (like key extraction), replacing it with manual string slicing (using `IndexByte`/`LastIndexByte`) yielded a ~2-4x speedup (25ns -> 6ns) and eliminated allocations entirely for common IPv4/IPv6 cases.
 **Action:** For string parsing in hot paths where input format is predictable (like `RemoteAddr` from `http.Server`), prefer direct string manipulation/slicing over generic standard library parsers to avoid allocations.
+
+## 2024-05-25 - Zero-Allocation State Updates
+**Learning:** Storing state structs by value in `MemoryStore` (via `interface{}`) causes heap allocation on every update because the struct must be boxed. By changing the internal state management to use pointers (`*tokenBucketState`), we reuse the heap-allocated struct across updates (since `MemoryStore` retains the pointer), eliminating allocations in the hot path.
+**Action:** When using generic stores (accepting `interface{}`) for frequent updates of mutable state, prefer storing pointers to structs rather than values. This avoids repeated boxing allocations, provided the storage backend supports it (e.g. in-memory) or the serializer handles pointers correctly.
