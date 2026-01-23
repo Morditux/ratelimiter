@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/Morditux/ratelimiter"
@@ -286,8 +287,10 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check excluded paths
-			for _, path := range options.ExcludePaths {
-				if matchPath(r.URL.Path, path) {
+			// Normalize path to ensure consistent matching
+			cleanPath := path.Clean(r.URL.Path)
+			for _, p := range options.ExcludePaths {
+				if matchPath(cleanPath, p) {
 					next.ServeHTTP(w, r)
 					return
 				}

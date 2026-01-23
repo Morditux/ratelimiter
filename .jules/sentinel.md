@@ -57,3 +57,8 @@
 **Vulnerability:** `DefaultKeyFunc` blindly accepted arbitrary strings from `X-Forwarded-For` and `X-Real-IP` as rate limit keys. An attacker could send requests with random strings in these headers, causing the `MemoryStore` to fill up with unique garbage keys, eventually triggering `ErrStoreFull` and causing a Denial of Service for legitimate users.
 **Learning:** When using external input (like headers) as keys for limited resources (storage), stricter validation is required. Trusting that input "looks like" an IP isn't enough; explicit validation ensures the keyspace is bounded to the expected domain.
 **Prevention:** Added `net.ParseIP` validation to `DefaultKeyFunc`. If the extracted value is not a valid IP address, it is ignored, and the function falls back to a safer source (like `RemoteAddr`), preventing the injection of arbitrary strings into the store.
+
+## 2025-05-27 - Rate Limit Bypass via Path Normalization
+**Vulnerability:** The rate limiter matched request paths against configured rules without normalization. An attacker could bypass strict rate limits on `/api/sensitive` by requesting `//api/sensitive` or `/api/../api/sensitive`, which the matcher treated as different strings but the backend handler resolved to the same resource.
+**Learning:** Security controls based on URL paths must always normalize the input before matching. Discrepancies between how middleware sees a path and how the application router sees it create bypass vulnerabilities.
+**Prevention:** Used `path.Clean` to normalize the request path before matching against rate limit rules in both `Router` and `RateLimitMiddleware`. This ensures that all variations of a path resolve to the canonical form before security checks.

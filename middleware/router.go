@@ -3,6 +3,7 @@ package middleware
 import (
 	"errors"
 	"net/http"
+	"path"
 
 	"github.com/Morditux/ratelimiter"
 	"github.com/Morditux/ratelimiter/algorithms"
@@ -131,8 +132,12 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 // matchEndpoint checks if a request matches an endpoint configuration.
 func (r *Router) matchEndpoint(req *http.Request, config EndpointConfig) bool {
+	// Normalize path to prevent bypasses
+	// e.g. //api/sensitive -> /api/sensitive
+	cleanPath := path.Clean(req.URL.Path)
+
 	// Check path
-	if !matchPath(req.URL.Path, config.Path) {
+	if !matchPath(cleanPath, config.Path) {
 		return false
 	}
 
