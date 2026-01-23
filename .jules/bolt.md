@@ -21,3 +21,7 @@
 ## 2024-05-25 - Zero-Allocation State Updates
 **Learning:** Storing state structs by value in `MemoryStore` (via `interface{}`) causes heap allocation on every update because the struct must be boxed. By changing the internal state management to use pointers (`*tokenBucketState`), we reuse the heap-allocated struct across updates (since `MemoryStore` retains the pointer), eliminating allocations in the hot path.
 **Action:** When using generic stores (accepting `interface{}`) for frequent updates of mutable state, prefer storing pointers to structs rather than values. This avoids repeated boxing allocations, provided the storage backend supports it (e.g. in-memory) or the serializer handles pointers correctly.
+
+## 2024-05-25 - Safe In-Place Mutation with Sharded Locks
+**Learning:** Extending the zero-allocation pointer pattern to `SlidingWindow` raised concerns about data races since multiple goroutines could theoretically access the same pointer. However, because the algorithm layer uses sharded locks (`sw.mu[idx]`) that wrap the entire read-modify-write cycle (including `getState`), in-place mutation of the shared state pointer is thread-safe.
+**Action:** When implementing zero-allocation patterns that rely on shared mutable state, explicitly document the locking strategy that guarantees safety. This prevents false positives in code reviews and ensures future maintainers understand why the "unsafe" looking mutation is actually safe.

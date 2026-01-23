@@ -159,7 +159,11 @@ func (sw *SlidingWindow) Remaining(key string) int {
 }
 
 // getState retrieves or initializes the sliding window state.
-func (sw *SlidingWindow) getState(key, storeKey string, useNS bool, now time.Time) slidingWindowState {
+// Optimization: Returns a pointer to avoid allocation when updating state in MemoryStore.
+// Safety: This function and the returned pointer must only be accessed while holding the
+// lock for the key (sw.getLock(key)). In-place mutation via advanceWindow is safe
+// because access is serialized by the lock.
+func (sw *SlidingWindow) getState(key, storeKey string, useNS bool, now time.Time) *slidingWindowState {
 	var val interface{}
 	var ok bool
 
@@ -170,40 +174,48 @@ func (sw *SlidingWindow) getState(key, storeKey string, useNS bool, now time.Tim
 	}
 
 	if ok {
-		if state, ok := val.(slidingWindowState); ok {
-			// Check if we need to slide to a new window
-			elapsed := now.Sub(state.WindowStart)
-
-			if elapsed >= sw.config.Window*2 {
-				// More than 2 windows have passed, reset completely
-				return slidingWindowState{
-					PrevCount:   0,
-					CurrCount:   0,
-					WindowStart: now,
-				}
-			} else if elapsed >= sw.config.Window {
-				// One window has passed, slide the window
-				return slidingWindowState{
-					PrevCount:   state.CurrCount,
-					CurrCount:   0,
-					WindowStart: state.WindowStart.Add(sw.config.Window),
-				}
-			}
-
+		// Fast path: pointer (zero allocation for MemoryStore updates)
+		if state, ok := val.(*slidingWindowState); ok {
+			sw.advanceWindow(state, now)
 			return state
+		}
+		// Fallback: value (handles migration or stores that return by value)
+		if state, ok := val.(slidingWindowState); ok {
+			// Copy to heap to allow pointer return
+			s := state
+			sw.advanceWindow(&s, now)
+			return &s
 		}
 	}
 
 	// Initialize new state
-	return slidingWindowState{
+	return &slidingWindowState{
 		PrevCount:   0,
 		CurrCount:   0,
 		WindowStart: now,
 	}
 }
 
+// advanceWindow updates the window state if time has passed.
+// It mutates the state in-place. This is safe because the caller holds the lock.
+func (sw *SlidingWindow) advanceWindow(state *slidingWindowState, now time.Time) {
+	elapsed := now.Sub(state.WindowStart)
+	if elapsed >= sw.config.Window*2 {
+		// More than 2 windows have passed, reset completely
+		state.PrevCount = 0
+		state.CurrCount = 0
+		state.WindowStart = now
+	} else if elapsed >= sw.config.Window {
+		// One window has passed, slide the window
+		state.PrevCount = state.CurrCount
+		state.CurrCount = 0
+		state.WindowStart = state.WindowStart.Add(sw.config.Window)
+	}
+}
+
 // saveState persists the sliding window state.
-func (sw *SlidingWindow) saveState(key, storeKey string, useNS bool, state slidingWindowState) error {
+// Optimization: Takes a pointer to support zero-allocation updates in MemoryStore.
+func (sw *SlidingWindow) saveState(key, storeKey string, useNS bool, state *slidingWindowState) error {
 	// Store with a TTL of 3x the window to allow for proper sliding
 	if useNS {
 		return sw.nsStore.SetWithNamespace("sw", key, state, sw.config.Window*3)
