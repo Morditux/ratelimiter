@@ -70,6 +70,9 @@ type Result struct {
 	// Allowed indicates if the request was allowed.
 	Allowed bool
 
+	// Limit is the total number of requests allowed per window.
+	Limit int
+
 	// Remaining is the number of requests remaining in the current window.
 	Remaining int
 
@@ -78,4 +81,11 @@ type Result struct {
 
 	// RetryAfter is the duration to wait before retrying (if not allowed).
 	RetryAfter time.Duration
+}
+
+// LimiterWithDetails extends Limiter to provide detailed rate limit information.
+type LimiterWithDetails interface {
+	Limiter
+	// AllowNWithDetails checks if n requests are allowed and returns detailed result.
+	AllowNWithDetails(key string, n int) (Result, error)
 }

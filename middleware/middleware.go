@@ -4,6 +4,7 @@ package middleware
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"path"
@@ -268,7 +269,9 @@ func DefaultOnLimited(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Permissions-Policy", "interest-cohort=()")
-	w.Header().Set("Retry-After", "60")
+	if w.Header().Get("Retry-After") == "" {
+		w.Header().Set("Retry-After", "60")
+	}
 	w.WriteHeader(http.StatusTooManyRequests)
 	w.Write([]byte(`{"error":"rate limit exceeded","message":"too many requests, please try again later"}`))
 }
@@ -314,8 +317,33 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 			// Get the rate limiting key
 			key := options.KeyFunc(r)
 
-			// Check the rate limit
-			allowed, err := limiter.Allow(key)
+			var allowed bool
+			var err error
+
+			// Check if limiter supports details
+			if detailsLimiter, ok := limiter.(ratelimiter.LimiterWithDetails); ok {
+				var result ratelimiter.Result
+				result, err = detailsLimiter.AllowNWithDetails(key, 1)
+				allowed = result.Allowed
+
+				// Set headers
+				w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", result.Limit))
+				w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+				w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", result.ResetAt.Unix()))
+
+				if !allowed && result.RetryAfter > 0 {
+					// Round up to nearest second
+					seconds := int(math.Ceil(result.RetryAfter.Seconds()))
+					if seconds < 1 {
+						seconds = 1
+					}
+					w.Header().Set("Retry-After", fmt.Sprintf("%d", seconds))
+				}
+			} else {
+				// Check the rate limit using standard interface
+				allowed, err = limiter.Allow(key)
+			}
+
 			if err != nil {
 				// FAIL SECURE: If the key is too long (likely an attack or misconfiguration),
 				// reject the request with 400 Bad Request or 431 Request Header Fields Too Large.

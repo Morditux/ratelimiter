@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"path"
 
@@ -94,7 +96,30 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if r.matchEndpoint(req, ep.config) {
 			key := r.options.KeyFunc(req) + ":" + ep.config.Path
 
-			allowed, err := ep.limiter.Allow(key)
+			var allowed bool
+			var err error
+
+			if detailsLimiter, ok := ep.limiter.(ratelimiter.LimiterWithDetails); ok {
+				var result ratelimiter.Result
+				result, err = detailsLimiter.AllowNWithDetails(key, 1)
+				allowed = result.Allowed
+
+				// Set headers
+				w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", result.Limit))
+				w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
+				w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", result.ResetAt.Unix()))
+
+				if !allowed && result.RetryAfter > 0 {
+					seconds := int(math.Ceil(result.RetryAfter.Seconds()))
+					if seconds < 1 {
+						seconds = 1
+					}
+					w.Header().Set("Retry-After", fmt.Sprintf("%d", seconds))
+				}
+			} else {
+				allowed, err = ep.limiter.Allow(key)
+			}
+
 			if err != nil {
 				// FAIL SECURE: If the key is too long (likely an attack or misconfiguration),
 				// reject the request with 431 Request Header Fields Too Large.

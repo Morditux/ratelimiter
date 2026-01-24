@@ -62,3 +62,8 @@
 **Vulnerability:** The rate limiter matched request paths against configured rules without normalization. An attacker could bypass strict rate limits on `/api/sensitive` by requesting `//api/sensitive` or `/api/../api/sensitive`, which the matcher treated as different strings but the backend handler resolved to the same resource.
 **Learning:** Security controls based on URL paths must always normalize the input before matching. Discrepancies between how middleware sees a path and how the application router sees it create bypass vulnerabilities.
 **Prevention:** Used `path.Clean` to normalize the request path before matching against rate limit rules in both `Router` and `RateLimitMiddleware`. This ensures that all variations of a path resolve to the canonical form before security checks.
+
+## 2024-05-22 - [Retry-After Calculation Precision]
+**Vulnerability:** Inaccurate `Retry-After` header calculation.
+**Learning:** Using `int(duration.Seconds())` truncates/floors the value, potentially telling the client to retry slightly before the rate limit actually expires. This can cause clients to be rejected again immediately, creating a loop or poor experience.
+**Prevention:** Always use `math.Ceil(duration.Seconds())` when converting time durations to seconds for `Retry-After` headers to ensure the client waits *at least* the required time.
