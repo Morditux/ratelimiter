@@ -290,12 +290,14 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check excluded paths
-			// Normalize path to ensure consistent matching
-			cleanPath := path.Clean(r.URL.Path)
-			for _, p := range options.ExcludePaths {
-				if matchPath(cleanPath, p) {
-					next.ServeHTTP(w, r)
-					return
+			if len(options.ExcludePaths) > 0 {
+				// Normalize path to ensure consistent matching
+				cleanPath := path.Clean(r.URL.Path)
+				for _, p := range options.ExcludePaths {
+					if matchPath(cleanPath, p) {
+						next.ServeHTTP(w, r)
+						return
+					}
 				}
 			}
 
