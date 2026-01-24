@@ -25,3 +25,7 @@
 ## 2024-05-25 - Safe In-Place Mutation with Sharded Locks
 **Learning:** Extending the zero-allocation pointer pattern to `SlidingWindow` raised concerns about data races since multiple goroutines could theoretically access the same pointer. However, because the algorithm layer uses sharded locks (`sw.mu[idx]`) that wrap the entire read-modify-write cycle (including `getState`), in-place mutation of the shared state pointer is thread-safe.
 **Action:** When implementing zero-allocation patterns that rely on shared mutable state, explicitly document the locking strategy that guarantees safety. This prevents false positives in code reviews and ensures future maintainers understand why the "unsafe" looking mutation is actually safe.
+
+## 2024-05-25 - Conditional Path Cleaning
+**Learning:** `path.Clean` is expensive because it often allocates a new string. In middleware hot paths, blindly calling it for features that might be disabled (like `ExcludePaths`) imposes a penalty on all requests.
+**Action:** Guard expensive normalization or parsing logic with checks for the feature's configuration (e.g., `if len(options.ExcludePaths) > 0`). This saved ~170ns/op and 1 allocation per request in the default case.
