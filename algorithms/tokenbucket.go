@@ -67,8 +67,14 @@ func (tb *TokenBucket) Allow(key string) (bool, error) {
 
 // AllowN checks if n requests are allowed.
 func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
+	result, err := tb.AllowNWithDetails(key, n)
+	return result.Allowed, err
+}
+
+// AllowNWithDetails checks if n requests are allowed and returns detailed result.
+func (tb *TokenBucket) AllowNWithDetails(key string, n int) (ratelimiter.Result, error) {
 	if n <= 0 {
-		return true, nil
+		return ratelimiter.Result{Allowed: true, Limit: tb.config.Rate, Remaining: int(tb.config.BurstSize)}, nil
 	}
 
 	var storeKey string
@@ -96,13 +102,29 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 	}
 	state.LastRefill = now
 
+	result := ratelimiter.Result{
+		Limit:   tb.config.Rate,
+		ResetAt: now.Add(tb.config.Window),
+	}
+
 	// Check if we have enough tokens
 	if state.Tokens >= float64(n) {
 		state.Tokens -= float64(n)
+		result.Allowed = true
+		result.Remaining = int(state.Tokens)
+
 		if err := tb.saveState(key, storeKey, useNS, state); err != nil {
-			return false, err
+			return ratelimiter.Result{}, err
 		}
-		return true, nil
+		return result, nil
+	}
+
+	// Not enough tokens
+	result.Allowed = false
+	result.Remaining = int(state.Tokens)
+	tokensNeeded := float64(n) - state.Tokens
+	if tokensNeeded > 0 {
+		result.RetryAfter = time.Duration(tokensNeeded / tb.tokensPerNano)
 	}
 
 	// Not enough tokens, save state and reject
@@ -112,7 +134,7 @@ func (tb *TokenBucket) AllowN(key string, n int) (bool, error) {
 	if err := tb.updateTTL(key, storeKey, useNS); err != nil {
 		_ = tb.saveState(key, storeKey, useNS, state)
 	}
-	return false, nil
+	return result, nil
 }
 
 // Reset clears the rate limit state for the given key.

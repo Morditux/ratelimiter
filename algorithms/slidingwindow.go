@@ -55,8 +55,14 @@ func (sw *SlidingWindow) Allow(key string) (bool, error) {
 
 // AllowN checks if n requests are allowed.
 func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
+	result, err := sw.AllowNWithDetails(key, n)
+	return result.Allowed, err
+}
+
+// AllowNWithDetails checks if n requests are allowed and returns detailed result.
+func (sw *SlidingWindow) AllowNWithDetails(key string, n int) (ratelimiter.Result, error) {
 	if n <= 0 {
-		return true, nil
+		return ratelimiter.Result{Allowed: true, Limit: sw.config.Rate, Remaining: sw.config.Rate}, nil
 	}
 
 	var storeKey string
@@ -72,6 +78,11 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 	now := time.Now()
 	state := sw.getState(key, storeKey, useNS, now)
 
+	result := ratelimiter.Result{
+		Limit:   sw.config.Rate,
+		ResetAt: state.WindowStart.Add(sw.config.Window),
+	}
+
 	// Calculate the weighted count
 	windowProgress := now.Sub(state.WindowStart).Seconds() * sw.invWindow
 	if windowProgress > 1 {
@@ -84,21 +95,39 @@ func (sw *SlidingWindow) AllowN(key string, n int) (bool, error) {
 
 	// Check if adding n requests would exceed the limit
 	if weightedCount+float64(n) > float64(sw.config.Rate) {
+		result.Allowed = false
+		// Conservative retry after: wait until the start of the next window
+		result.RetryAfter = sw.config.Window - now.Sub(state.WindowStart)
+
+		remaining := float64(sw.config.Rate) - weightedCount
+		if remaining < 0 {
+			remaining = 0
+		}
+		result.Remaining = int(remaining)
+
 		// Optimization: If we reject, we can just update the TTL to keep the key alive
 		// without writing the full state (which requires allocation).
 		// We only fall back to full save if UpdateTTL is not supported or fails.
 		if err := sw.updateTTL(key, storeKey, useNS); err != nil {
 			_ = sw.saveState(key, storeKey, useNS, state)
 		}
-		return false, nil
+		return result, nil
 	}
 
 	// Allow the request and increment the counter
 	state.CurrCount += n
-	if err := sw.saveState(key, storeKey, useNS, state); err != nil {
-		return false, err
+
+	result.Allowed = true
+	remaining := float64(sw.config.Rate) - (weightedCount + float64(n))
+	if remaining < 0 {
+		remaining = 0
 	}
-	return true, nil
+	result.Remaining = int(remaining)
+
+	if err := sw.saveState(key, storeKey, useNS, state); err != nil {
+		return ratelimiter.Result{}, err
+	}
+	return result, nil
 }
 
 // updateTTL updates the expiration of the key without saving the state.
