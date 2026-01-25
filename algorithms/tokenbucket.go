@@ -229,9 +229,6 @@ func (tb *TokenBucket) storeKey(key string) string {
 
 // getLock returns the mutex for the given key based on a hash.
 func (tb *TokenBucket) getLock(key string) *sync.Mutex {
-	var h maphash.Hash
-	h.SetSeed(tb.seed)
-	h.WriteString(key)
-	idx := h.Sum64() % shardCount
+	idx := maphash.String(tb.seed, key) % shardCount
 	return &tb.mu[idx].Mutex
 }

@@ -259,9 +259,6 @@ func (sw *SlidingWindow) storeKey(key string) string {
 
 // getLock returns the mutex for the given key based on a hash.
 func (sw *SlidingWindow) getLock(key string) *sync.Mutex {
-	var h maphash.Hash
-	h.SetSeed(sw.seed)
-	h.WriteString(key)
-	idx := h.Sum64() % shardCount
+	idx := maphash.String(sw.seed, key) % shardCount
 	return &sw.mu[idx].Mutex
 }
