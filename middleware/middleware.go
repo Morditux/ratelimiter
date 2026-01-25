@@ -269,6 +269,8 @@ func DefaultOnLimited(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Permissions-Policy", "interest-cohort=()")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
 	if w.Header().Get("Retry-After") == "" {
 		w.Header().Set("Retry-After", "60")
 	}

@@ -67,3 +67,8 @@
 **Vulnerability:** Inaccurate `Retry-After` header calculation.
 **Learning:** Using `int(duration.Seconds())` truncates/floors the value, potentially telling the client to retry slightly before the rate limit actually expires. This can cause clients to be rejected again immediately, creating a loop or poor experience.
 **Prevention:** Always use `math.Ceil(duration.Seconds())` when converting time durations to seconds for `Retry-After` headers to ensure the client waits *at least* the required time.
+
+## 2025-05-28 - Missing Cache-Control on Error Responses
+**Vulnerability:** 429 Too Many Requests responses lacked `Cache-Control` headers. Intermediate proxies or clients could cache these error responses, causing users to be blocked even after the rate limit window reset, or creating stale state.
+**Learning:** Error responses, especially those representing temporary states like rate limiting, must explicitly define caching behavior. Relying on default behavior is risky as it varies by implementation.
+**Prevention:** Added `Cache-Control: no-store` and `Pragma: no-cache` to `DefaultOnLimited` to ensure immediate expiration of the 429 status.
