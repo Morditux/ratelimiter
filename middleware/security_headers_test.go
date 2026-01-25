@@ -19,6 +19,8 @@ func TestDefaultOnLimitedEnhancedSecurityHeaders(t *testing.T) {
 		"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
 		"Referrer-Policy":         "no-referrer",
 		"Permissions-Policy":      "interest-cohort=()",
+		"Cache-Control":           "no-store",
+		"Pragma":                  "no-cache",
 		"Retry-After":             "60",
 		"Content-Type":            "application/json",
 	}
