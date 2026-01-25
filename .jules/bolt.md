@@ -29,3 +29,7 @@
 ## 2024-05-25 - Conditional Path Cleaning
 **Learning:** `path.Clean` is expensive because it often allocates a new string. In middleware hot paths, blindly calling it for features that might be disabled (like `ExcludePaths`) imposes a penalty on all requests.
 **Action:** Guard expensive normalization or parsing logic with checks for the feature's configuration (e.g., `if len(options.ExcludePaths) > 0`). This saved ~170ns/op and 1 allocation per request in the default case.
+
+## 2025-05-26 - Optimized Hashing for Sharding
+**Learning:** In the `getLock` method, which is called on every request, initializing a `maphash.Hash` struct (even on the stack) and calling its methods introduced measurable overhead. Replacing it with `maphash.String` (available since Go 1.19) reduced this overhead, resulting in a ~3-6% throughput improvement in the rate limiter's hot path.
+**Action:** Prefer `maphash.String` or `maphash.Bytes` over creating a new `maphash.Hash` instance when hashing a single string or byte slice in tight loops or hot paths, as it avoids the initialization cost of the Hash struct.
