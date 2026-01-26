@@ -2,6 +2,7 @@ package store
 
 import (
 	"hash/maphash"
+	"math/bits"
 	"sync"
 	"time"
 )
@@ -267,10 +268,16 @@ func (s *MemoryStore) cleanupShard(shard *shard) {
 
 // getShard returns the shard for the given key.
 func (s *MemoryStore) getShard(k internalKey) *shard {
-	var h maphash.Hash
-	h.SetSeed(s.seed)
-	h.WriteString(k.ns)
-	h.WriteString(k.key)
-	idx := h.Sum64() % shardCount
-	return s.shards[idx]
+	var idx uint64
+	if k.ns == "" {
+		// Fast path for no namespace: avoid extra hashing and rotation
+		idx = maphash.String(s.seed, k.key)
+	} else {
+		// Combine namespace and key hashes using XOR and rotation to mix bits
+		// This avoids allocating maphash.Hash struct and calling WriteString twice
+		h1 := maphash.String(s.seed, k.ns)
+		h2 := maphash.String(s.seed, k.key)
+		idx = bits.RotateLeft64(h1, 32) ^ h2
+	}
+	return s.shards[idx%shardCount]
 }
