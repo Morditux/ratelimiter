@@ -58,12 +58,17 @@ type endpointLimiter struct {
 // NewRouter creates a new router with per-endpoint rate limiting.
 func NewRouter(handler http.Handler, s store.Store, endpoints []EndpointConfig, opts ...Option) (*Router, error) {
 	options := &Options{
-		KeyFunc:   DefaultKeyFunc,
-		OnLimited: DefaultOnLimited,
+		KeyFunc:    DefaultKeyFunc,
+		OnLimited:  DefaultOnLimited,
+		MaxKeySize: 4096,
 	}
 
 	for _, opt := range opts {
 		opt(options)
+	}
+
+	if options.MaxKeySize <= 0 {
+		options.MaxKeySize = 4096
 	}
 
 	r := &Router{
@@ -95,6 +100,12 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	for _, ep := range r.endpoints {
 		if r.matchEndpoint(req, ep.config) {
 			key := r.options.KeyFunc(req) + ":" + ep.config.Path
+
+			// FAIL SECURE: Check key length early to prevent DoS (memory/cpu) in the limiter/store.
+			if len(key) > r.options.MaxKeySize {
+				http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
+				return
+			}
 
 			var allowed bool
 			var err error
