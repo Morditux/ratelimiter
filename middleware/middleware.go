@@ -38,6 +38,11 @@ type Options struct {
 	// IncludeMethods limits rate limiting to specific HTTP methods.
 	// Empty means all methods are rate limited.
 	IncludeMethods []string
+
+	// MaxKeySize is the maximum allowed length of a rate limit key.
+	// Keys exceeding this length will be rejected with 431 Request Header Fields Too Large.
+	// Default: 4096.
+	MaxKeySize int
 }
 
 // Option is a function that configures Options.
@@ -68,6 +73,13 @@ func WithExcludePaths(paths ...string) Option {
 func WithIncludeMethods(methods ...string) Option {
 	return func(o *Options) {
 		o.IncludeMethods = methods
+	}
+}
+
+// WithMaxKeySize sets the maximum allowed length of a rate limit key.
+func WithMaxKeySize(size int) Option {
+	return func(o *Options) {
+		o.MaxKeySize = size
 	}
 }
 
@@ -281,12 +293,17 @@ func DefaultOnLimited(w http.ResponseWriter, r *http.Request) {
 // RateLimitMiddleware creates a rate limiting middleware.
 func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.Handler) http.Handler {
 	options := &Options{
-		KeyFunc:   DefaultKeyFunc,
-		OnLimited: DefaultOnLimited,
+		KeyFunc:    DefaultKeyFunc,
+		OnLimited:  DefaultOnLimited,
+		MaxKeySize: 4096,
 	}
 
 	for _, opt := range opts {
 		opt(options)
+	}
+
+	if options.MaxKeySize <= 0 {
+		options.MaxKeySize = 4096
 	}
 
 	return func(next http.Handler) http.Handler {
@@ -320,6 +337,12 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 
 			// Get the rate limiting key
 			key := options.KeyFunc(r)
+
+			// FAIL SECURE: Check key length early to prevent DoS (memory/cpu) in the limiter/store.
+			if len(key) > options.MaxKeySize {
+				http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
+				return
+			}
 
 			var allowed bool
 			var err error

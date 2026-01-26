@@ -72,3 +72,8 @@
 **Vulnerability:** 429 Too Many Requests responses lacked `Cache-Control` headers. Intermediate proxies or clients could cache these error responses, causing users to be blocked even after the rate limit window reset, or creating stale state.
 **Learning:** Error responses, especially those representing temporary states like rate limiting, must explicitly define caching behavior. Relying on default behavior is risky as it varies by implementation.
 **Prevention:** Added `Cache-Control: no-store` and `Pragma: no-cache` to `DefaultOnLimited` to ensure immediate expiration of the 429 status.
+
+## 2025-05-29 - DoS via Large Key Processing
+**Vulnerability:** `RateLimitMiddleware` allowed processing of arbitrary length keys (limited only by Store), potentially consuming CPU (hashing) and Memory before the store rejected them.
+**Learning:** Input validation (length checks) should happen as early as possible, before expensive operations like hashing or allocation. Relying on the storage layer to enforce limits is "too late" for DoS prevention.
+**Prevention:** Implemented explicit `MaxKeySize` check in middleware, defaulting to 4096 bytes. Requests exceeding this limit are rejected immediately with 431.
