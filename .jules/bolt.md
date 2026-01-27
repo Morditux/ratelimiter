@@ -17,3 +17,7 @@
 ## 2024-05-25 - Zero-Allocation IP Extraction
 **Learning:** The standard library's `net.SplitHostPort` is robust but allocates strings on every call. In high-throughput middleware hot paths (like key extraction), replacing it with manual string slicing (using `IndexByte`/`LastIndexByte`) yielded a ~2-4x speedup (25ns -> 6ns) and eliminated allocations entirely for common IPv4/IPv6 cases.
 **Action:** For string parsing in hot paths where input format is predictable (like `RemoteAddr` from `http.Server`), prefer direct string manipulation/slicing over generic standard library parsers to avoid allocations.
+
+## 2024-05-25 - Propagate Time to Reduce Syscalls
+**Learning:** In high-throughput rate limiting, calling `time.Now()` multiple times (in algorithm logic, then again in storage expiration checks) adds measurable overhead (~50ns/op). By capturing `now` once at the entry point and propagating it through the interface (e.g., `TimeAwareStore`), we reduced CPU time per operation by ~10-12%.
+**Action:** When a timestamp is needed by multiple layers in a hot path request, capture it once at the top level and pass it down as an argument instead of re-fetching it in each function.

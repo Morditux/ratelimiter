@@ -44,6 +44,21 @@ type NamespacedStore interface {
 	DeleteWithNamespace(namespace, key string) error
 }
 
+// TimeAwareStore extends Store with methods that accept a reference time.
+// This allows avoiding redundant time.Now() calls in high-throughput scenarios.
+type TimeAwareStore interface {
+	GetAt(key string, now time.Time) (interface{}, bool)
+	SetAt(key string, value interface{}, ttl time.Duration, now time.Time) error
+	UpdateTTLAt(key string, ttl time.Duration, now time.Time) error
+}
+
+// NamespacedTimeAwareStore extends NamespacedStore with methods that accept a reference time.
+type NamespacedTimeAwareStore interface {
+	GetWithNamespaceAt(namespace, key string, now time.Time) (interface{}, bool)
+	SetWithNamespaceAt(namespace, key string, value interface{}, ttl time.Duration, now time.Time) error
+	UpdateTTLWithNamespaceAt(namespace, key string, ttl time.Duration, now time.Time) error
+}
+
 // Entry represents a stored value with its expiration time.
 type Entry struct {
 	Value     interface{}

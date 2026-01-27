@@ -94,11 +94,21 @@ func NewMemoryStoreWithConfig(config MemoryStoreConfig) *MemoryStore {
 
 // Get retrieves a value from the store.
 func (s *MemoryStore) Get(key string) (interface{}, bool) {
-	return s.GetWithNamespace("", key)
+	return s.GetAt(key, time.Now())
+}
+
+// GetAt retrieves a value from the store using a reference time for expiration check.
+func (s *MemoryStore) GetAt(key string, now time.Time) (interface{}, bool) {
+	return s.GetWithNamespaceAt("", key, now)
 }
 
 // GetWithNamespace retrieves a value from the store using a namespace and key.
 func (s *MemoryStore) GetWithNamespace(namespace, key string) (interface{}, bool) {
+	return s.GetWithNamespaceAt(namespace, key, time.Now())
+}
+
+// GetWithNamespaceAt retrieves a value from the store using a namespace, key, and reference time.
+func (s *MemoryStore) GetWithNamespaceAt(namespace, key string, now time.Time) (interface{}, bool) {
 	if len(namespace)+len(key) > s.maxKeySize {
 		return nil, false
 	}
@@ -113,7 +123,8 @@ func (s *MemoryStore) GetWithNamespace(namespace, key string) (interface{}, bool
 		return nil, false
 	}
 
-	if entry.IsExpired() {
+	// Optimization: use passed-in time instead of calling time.Now()
+	if !entry.ExpiresAt.IsZero() && now.After(entry.ExpiresAt) {
 		return nil, false
 	}
 
@@ -122,11 +133,21 @@ func (s *MemoryStore) GetWithNamespace(namespace, key string) (interface{}, bool
 
 // Set stores a value with an optional TTL.
 func (s *MemoryStore) Set(key string, value interface{}, ttl time.Duration) error {
-	return s.SetWithNamespace("", key, value, ttl)
+	return s.SetAt(key, value, ttl, time.Now())
+}
+
+// SetAt stores a value with an optional TTL and reference time.
+func (s *MemoryStore) SetAt(key string, value interface{}, ttl time.Duration, now time.Time) error {
+	return s.SetWithNamespaceAt("", key, value, ttl, now)
 }
 
 // SetWithNamespace stores a value with namespace using an optional TTL.
 func (s *MemoryStore) SetWithNamespace(namespace, key string, value interface{}, ttl time.Duration) error {
+	return s.SetWithNamespaceAt(namespace, key, value, ttl, time.Now())
+}
+
+// SetWithNamespaceAt stores a value with namespace using an optional TTL and reference time.
+func (s *MemoryStore) SetWithNamespaceAt(namespace, key string, value interface{}, ttl time.Duration, now time.Time) error {
 	if len(namespace)+len(key) > s.maxKeySize {
 		return ErrKeyTooLong
 	}
@@ -141,7 +162,7 @@ func (s *MemoryStore) SetWithNamespace(namespace, key string, value interface{},
 	}
 
 	if ttl > 0 {
-		entry.ExpiresAt = time.Now().Add(ttl)
+		entry.ExpiresAt = now.Add(ttl)
 	}
 
 	// Optimization: avoid double lookup if shard is not full
@@ -182,11 +203,21 @@ func (s *MemoryStore) DeleteWithNamespace(namespace, key string) error {
 
 // UpdateTTL updates the expiration of a key without changing its value.
 func (s *MemoryStore) UpdateTTL(key string, ttl time.Duration) error {
-	return s.UpdateTTLWithNamespace("", key, ttl)
+	return s.UpdateTTLAt(key, ttl, time.Now())
+}
+
+// UpdateTTLAt updates the expiration of a key using a reference time.
+func (s *MemoryStore) UpdateTTLAt(key string, ttl time.Duration, now time.Time) error {
+	return s.UpdateTTLWithNamespaceAt("", key, ttl, now)
 }
 
 // UpdateTTLWithNamespace updates the expiration of a namespaced key without changing its value.
 func (s *MemoryStore) UpdateTTLWithNamespace(namespace, key string, ttl time.Duration) error {
+	return s.UpdateTTLWithNamespaceAt(namespace, key, ttl, time.Now())
+}
+
+// UpdateTTLWithNamespaceAt updates the expiration of a namespaced key using a reference time.
+func (s *MemoryStore) UpdateTTLWithNamespaceAt(namespace, key string, ttl time.Duration, now time.Time) error {
 	if len(namespace)+len(key) > s.maxKeySize {
 		return ErrKeyTooLong
 	}
@@ -203,7 +234,7 @@ func (s *MemoryStore) UpdateTTLWithNamespace(namespace, key string, ttl time.Dur
 	}
 
 	if ttl > 0 {
-		entry.ExpiresAt = time.Now().Add(ttl)
+		entry.ExpiresAt = now.Add(ttl)
 	} else {
 		entry.ExpiresAt = time.Time{}
 	}
