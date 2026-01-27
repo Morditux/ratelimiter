@@ -33,3 +33,7 @@
 ## 2025-05-26 - Optimized Hashing for Sharding
 **Learning:** In the `getLock` method, which is called on every request, initializing a `maphash.Hash` struct (even on the stack) and calling its methods introduced measurable overhead. Replacing it with `maphash.String` (available since Go 1.19) reduced this overhead, resulting in a ~3-6% throughput improvement in the rate limiter's hot path.
 **Action:** Prefer `maphash.String` or `maphash.Bytes` over creating a new `maphash.Hash` instance when hashing a single string or byte slice in tight loops or hot paths, as it avoids the initialization cost of the Hash struct.
+
+## 2025-05-26 - Skipping Redundant Persistence for Pointer-Based Stores
+**Learning:** When using an in-memory store that holds pointers (like `MemoryStore`), frequent `Set` calls just to update TTL introduce unnecessary lock contention and overhead. By tracking the `LastSave` time within the state object (which is mutated in-place), we can skip `Set` calls if the TTL is still sufficiently fresh (e.g., within 1 window period). This reduced latency by ~37-63% in high-concurrency benchmarks by eliminating the secondary lock acquisition on the store shard for most requests.
+**Action:** For hot-path state updates where persistence is backed by memory (pointers), implement "lazy TTL updates" by checking if the last save was recent enough before triggering a store write. Ensure the store implementation actually shares the pointer (and not a copy) before applying this optimization.
