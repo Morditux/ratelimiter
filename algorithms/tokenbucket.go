@@ -14,6 +14,7 @@ import (
 type tokenBucketState struct {
 	Tokens     float64
 	LastRefill time.Time
+	LastSave   time.Time // Last time the state was saved (TTL updated)
 }
 
 const shardCount = 256
@@ -22,12 +23,13 @@ const shardCount = 256
 // Tokens are added at a steady rate and consumed by requests.
 // This allows for controlled bursting while maintaining an average rate.
 type TokenBucket struct {
-	config        ratelimiter.Config
-	store         store.Store
-	nsStore       store.NamespacedStore
-	mu            [shardCount]paddedMutex // Sharded mutexes to reduce contention
-	tokensPerNano float64                 // Pre-calculated tokens/ns to avoid repetitive division
-	seed          maphash.Seed            // Seed for sharding hash
+	config         ratelimiter.Config
+	store          store.Store
+	nsStore        store.NamespacedStore
+	mu             [shardCount]paddedMutex // Sharded mutexes to reduce contention
+	tokensPerNano  float64                 // Pre-calculated tokens/ns to avoid repetitive division
+	seed           maphash.Seed            // Seed for sharding hash
+	isPointerStore bool                    // True if the store holds state by pointer (e.g. MemoryStore)
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -55,6 +57,12 @@ func NewTokenBucket(config ratelimiter.Config, s store.Store) (*TokenBucket, err
 
 	if ns, ok := s.(store.NamespacedStore); ok {
 		tb.nsStore = ns
+	}
+
+	// Check if store is pointer-based (like MemoryStore)
+	// optimizing for zero-allocation updates
+	if _, ok := s.(*store.MemoryStore); ok {
+		tb.isPointerStore = true
 	}
 
 	return tb, nil
@@ -113,8 +121,22 @@ func (tb *TokenBucket) AllowNWithDetails(key string, n int) (ratelimiter.Result,
 		result.Allowed = true
 		result.Remaining = int(state.Tokens)
 
-		if err := tb.saveState(key, storeKey, useNS, state); err != nil {
-			return ratelimiter.Result{}, err
+		// Optimization: If store holds pointers (like MemoryStore), we only need to
+		// save state (which updates TTL) if it's getting close to expiration.
+		// Since we modified state in place (via pointer), the data is already up to date.
+		shouldSave := true
+		if tb.isPointerStore {
+			// TTL is 2*Window. If we saved recently (within 1 Window), we can skip save.
+			if now.Sub(state.LastSave) < tb.config.Window {
+				shouldSave = false
+			}
+		}
+
+		if shouldSave {
+			state.LastSave = now
+			if err := tb.saveState(key, storeKey, useNS, state); err != nil {
+				return ratelimiter.Result{}, err
+			}
 		}
 		return result, nil
 	}
@@ -131,8 +153,23 @@ func (tb *TokenBucket) AllowNWithDetails(key string, n int) (ratelimiter.Result,
 	// Optimization: If we reject, we can just update the TTL to keep the key alive
 	// without writing the full state (which requires allocation).
 	// We only fall back to full save if UpdateTTL is not supported or fails.
-	if err := tb.updateTTL(key, storeKey, useNS); err != nil {
-		_ = tb.saveState(key, storeKey, useNS, state)
+
+	// Apply same optimization for UpdateTTL
+	shouldSave := true
+	if tb.isPointerStore {
+		if now.Sub(state.LastSave) < tb.config.Window {
+			shouldSave = false
+		}
+	}
+
+	if shouldSave {
+		if err := tb.updateTTL(key, storeKey, useNS); err != nil {
+			state.LastSave = now
+			_ = tb.saveState(key, storeKey, useNS, state)
+		} else {
+			// UpdateTTL successful, effectively saved/extended TTL
+			state.LastSave = now
+		}
 	}
 	return result, nil
 }
