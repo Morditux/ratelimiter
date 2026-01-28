@@ -340,7 +340,7 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 
 			// FAIL SECURE: Check key length early to prevent DoS (memory/cpu) in the limiter/store.
 			if len(key) > options.MaxKeySize {
-				http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
+				writeError(w, http.StatusRequestHeaderFieldsTooLarge, "Rate limit key too long")
 				return
 			}
 
@@ -375,7 +375,7 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 				// FAIL SECURE: If the key is too long (likely an attack or misconfiguration),
 				// reject the request with 400 Bad Request or 431 Request Header Fields Too Large.
 				if errors.Is(err, store.ErrKeyTooLong) {
-					http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
+					writeError(w, http.StatusRequestHeaderFieldsTooLarge, "Rate limit key too long")
 					return
 				}
 
@@ -383,7 +383,8 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 				// rate limit bypass. When the store is full, we cannot persist the state,
 				// so we cannot enforce the limit.
 				if errors.Is(err, store.ErrStoreFull) {
-					http.Error(w, "Rate limit store full", http.StatusServiceUnavailable)
+					w.Header().Set("Retry-After", "60")
+					writeError(w, http.StatusServiceUnavailable, "Rate limit store full")
 					return
 				}
 
@@ -401,6 +402,18 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// writeError writes a plain text error response with strict security headers.
+func writeError(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+	w.WriteHeader(code)
+	fmt.Fprintln(w, message)
 }
 
 // matchPath checks if a request path matches a pattern.
