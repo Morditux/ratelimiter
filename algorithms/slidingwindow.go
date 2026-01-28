@@ -20,12 +20,14 @@ type slidingWindowState struct {
 // It provides a more accurate rate limit than fixed windows by considering
 // a weighted count from the previous window.
 type SlidingWindow struct {
-	config    ratelimiter.Config
-	store     store.Store
-	nsStore   store.NamespacedStore
-	mu        [shardCount]paddedMutex // Sharded mutexes to reduce contention
-	invWindow float64                 // Pre-calculated inverse window for faster multiplication
-	seed      maphash.Seed            // Seed for sharding hash
+	config           ratelimiter.Config
+	store            store.Store
+	nsStore          store.NamespacedStore
+	timeAwareStore   store.TimeAwareStore
+	nsTimeAwareStore store.NamespacedTimeAwareStore
+	mu               [shardCount]paddedMutex // Sharded mutexes to reduce contention
+	invWindow        float64                 // Pre-calculated inverse window for faster multiplication
+	seed             maphash.Seed            // Seed for sharding hash
 }
 
 // NewSlidingWindow creates a new sliding window rate limiter.
@@ -43,6 +45,13 @@ func NewSlidingWindow(config ratelimiter.Config, s store.Store) (*SlidingWindow,
 
 	if ns, ok := s.(store.NamespacedStore); ok {
 		sw.nsStore = ns
+	}
+
+	if tas, ok := s.(store.TimeAwareStore); ok {
+		sw.timeAwareStore = tas
+	}
+	if nstas, ok := s.(store.NamespacedTimeAwareStore); ok {
+		sw.nsTimeAwareStore = nstas
 	}
 
 	return sw, nil
@@ -108,8 +117,8 @@ func (sw *SlidingWindow) AllowNWithDetails(key string, n int) (ratelimiter.Resul
 		// Optimization: If we reject, we can just update the TTL to keep the key alive
 		// without writing the full state (which requires allocation).
 		// We only fall back to full save if UpdateTTL is not supported or fails.
-		if err := sw.updateTTL(key, storeKey, useNS); err != nil {
-			_ = sw.saveState(key, storeKey, useNS, state)
+		if err := sw.updateTTL(key, storeKey, useNS, now); err != nil {
+			_ = sw.saveState(key, storeKey, useNS, state, now)
 		}
 		return result, nil
 	}
@@ -124,20 +133,26 @@ func (sw *SlidingWindow) AllowNWithDetails(key string, n int) (ratelimiter.Resul
 	}
 	result.Remaining = int(remaining)
 
-	if err := sw.saveState(key, storeKey, useNS, state); err != nil {
+	if err := sw.saveState(key, storeKey, useNS, state, now); err != nil {
 		return ratelimiter.Result{}, err
 	}
 	return result, nil
 }
 
 // updateTTL updates the expiration of the key without saving the state.
-func (sw *SlidingWindow) updateTTL(key, storeKey string, useNS bool) error {
+func (sw *SlidingWindow) updateTTL(key, storeKey string, useNS bool, now time.Time) error {
 	ttl := sw.config.Window * 3
 	if useNS {
+		if sw.nsTimeAwareStore != nil {
+			return sw.nsTimeAwareStore.UpdateTTLWithNamespaceAt("sw", key, ttl, now)
+		}
 		if ttlStore, ok := sw.nsStore.(store.NamespacedTTLStore); ok {
 			return ttlStore.UpdateTTLWithNamespace("sw", key, ttl)
 		}
 	} else {
+		if sw.timeAwareStore != nil {
+			return sw.timeAwareStore.UpdateTTLAt(storeKey, ttl, now)
+		}
 		if ttlStore, ok := sw.store.(store.TTLStore); ok {
 			return ttlStore.UpdateTTL(storeKey, ttl)
 		}
@@ -197,9 +212,17 @@ func (sw *SlidingWindow) getState(key, storeKey string, useNS bool, now time.Tim
 	var ok bool
 
 	if useNS {
-		val, ok = sw.nsStore.GetWithNamespace("sw", key)
+		if sw.nsTimeAwareStore != nil {
+			val, ok = sw.nsTimeAwareStore.GetWithNamespaceAt("sw", key, now)
+		} else {
+			val, ok = sw.nsStore.GetWithNamespace("sw", key)
+		}
 	} else {
-		val, ok = sw.store.Get(storeKey)
+		if sw.timeAwareStore != nil {
+			val, ok = sw.timeAwareStore.GetAt(storeKey, now)
+		} else {
+			val, ok = sw.store.Get(storeKey)
+		}
 	}
 
 	if ok {
@@ -244,12 +267,19 @@ func (sw *SlidingWindow) advanceWindow(state *slidingWindowState, now time.Time)
 
 // saveState persists the sliding window state.
 // Optimization: Takes a pointer to support zero-allocation updates in MemoryStore.
-func (sw *SlidingWindow) saveState(key, storeKey string, useNS bool, state *slidingWindowState) error {
+func (sw *SlidingWindow) saveState(key, storeKey string, useNS bool, state *slidingWindowState, now time.Time) error {
 	// Store with a TTL of 3x the window to allow for proper sliding
+	ttl := sw.config.Window * 3
 	if useNS {
-		return sw.nsStore.SetWithNamespace("sw", key, state, sw.config.Window*3)
+		if sw.nsTimeAwareStore != nil {
+			return sw.nsTimeAwareStore.SetWithNamespaceAt("sw", key, state, ttl, now)
+		}
+		return sw.nsStore.SetWithNamespace("sw", key, state, ttl)
 	}
-	return sw.store.Set(storeKey, state, sw.config.Window*3)
+	if sw.timeAwareStore != nil {
+		return sw.timeAwareStore.SetAt(storeKey, state, ttl, now)
+	}
+	return sw.store.Set(storeKey, state, ttl)
 }
 
 // storeKey generates the storage key for a rate limit key.

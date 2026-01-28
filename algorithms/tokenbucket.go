@@ -22,12 +22,14 @@ const shardCount = 256
 // Tokens are added at a steady rate and consumed by requests.
 // This allows for controlled bursting while maintaining an average rate.
 type TokenBucket struct {
-	config        ratelimiter.Config
-	store         store.Store
-	nsStore       store.NamespacedStore
-	mu            [shardCount]paddedMutex // Sharded mutexes to reduce contention
-	tokensPerNano float64                 // Pre-calculated tokens/ns to avoid repetitive division
-	seed          maphash.Seed            // Seed for sharding hash
+	config           ratelimiter.Config
+	store            store.Store
+	nsStore          store.NamespacedStore
+	timeAwareStore   store.TimeAwareStore
+	nsTimeAwareStore store.NamespacedTimeAwareStore
+	mu               [shardCount]paddedMutex // Sharded mutexes to reduce contention
+	tokensPerNano    float64                 // Pre-calculated tokens/ns to avoid repetitive division
+	seed             maphash.Seed            // Seed for sharding hash
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -55,6 +57,13 @@ func NewTokenBucket(config ratelimiter.Config, s store.Store) (*TokenBucket, err
 
 	if ns, ok := s.(store.NamespacedStore); ok {
 		tb.nsStore = ns
+	}
+
+	if tas, ok := s.(store.TimeAwareStore); ok {
+		tb.timeAwareStore = tas
+	}
+	if nstas, ok := s.(store.NamespacedTimeAwareStore); ok {
+		tb.nsTimeAwareStore = nstas
 	}
 
 	return tb, nil
@@ -113,7 +122,7 @@ func (tb *TokenBucket) AllowNWithDetails(key string, n int) (ratelimiter.Result,
 		result.Allowed = true
 		result.Remaining = int(state.Tokens)
 
-		if err := tb.saveState(key, storeKey, useNS, state); err != nil {
+		if err := tb.saveState(key, storeKey, useNS, state, now); err != nil {
 			return ratelimiter.Result{}, err
 		}
 		return result, nil
@@ -131,8 +140,8 @@ func (tb *TokenBucket) AllowNWithDetails(key string, n int) (ratelimiter.Result,
 	// Optimization: If we reject, we can just update the TTL to keep the key alive
 	// without writing the full state (which requires allocation).
 	// We only fall back to full save if UpdateTTL is not supported or fails.
-	if err := tb.updateTTL(key, storeKey, useNS); err != nil {
-		_ = tb.saveState(key, storeKey, useNS, state)
+	if err := tb.updateTTL(key, storeKey, useNS, now); err != nil {
+		_ = tb.saveState(key, storeKey, useNS, state, now)
 	}
 	return result, nil
 }
@@ -172,9 +181,17 @@ func (tb *TokenBucket) getState(key, storeKey string, useNS bool, now time.Time)
 	var ok bool
 
 	if useNS {
-		val, ok = tb.nsStore.GetWithNamespace("tb", key)
+		if tb.nsTimeAwareStore != nil {
+			val, ok = tb.nsTimeAwareStore.GetWithNamespaceAt("tb", key, now)
+		} else {
+			val, ok = tb.nsStore.GetWithNamespace("tb", key)
+		}
 	} else {
-		val, ok = tb.store.Get(storeKey)
+		if tb.timeAwareStore != nil {
+			val, ok = tb.timeAwareStore.GetAt(storeKey, now)
+		} else {
+			val, ok = tb.store.Get(storeKey)
+		}
 	}
 
 	if ok {
@@ -197,23 +214,36 @@ func (tb *TokenBucket) getState(key, storeKey string, useNS bool, now time.Time)
 
 // saveState persists the token bucket state.
 // Optimization: Takes a pointer to support zero-allocation updates in MemoryStore.
-func (tb *TokenBucket) saveState(key, storeKey string, useNS bool, state *tokenBucketState) error {
+func (tb *TokenBucket) saveState(key, storeKey string, useNS bool, state *tokenBucketState, now time.Time) error {
 	// Store with a TTL of 2x the window to allow for cleanup
+	ttl := tb.config.Window * 2
 	if useNS {
-		return tb.nsStore.SetWithNamespace("tb", key, state, tb.config.Window*2)
+		if tb.nsTimeAwareStore != nil {
+			return tb.nsTimeAwareStore.SetWithNamespaceAt("tb", key, state, ttl, now)
+		}
+		return tb.nsStore.SetWithNamespace("tb", key, state, ttl)
 	}
-	return tb.store.Set(storeKey, state, tb.config.Window*2)
+	if tb.timeAwareStore != nil {
+		return tb.timeAwareStore.SetAt(storeKey, state, ttl, now)
+	}
+	return tb.store.Set(storeKey, state, ttl)
 }
 
 // updateTTL updates the expiration of the key without saving the state.
-func (tb *TokenBucket) updateTTL(key, storeKey string, useNS bool) error {
+func (tb *TokenBucket) updateTTL(key, storeKey string, useNS bool, now time.Time) error {
 	ttl := tb.config.Window * 2
 	if useNS {
+		if tb.nsTimeAwareStore != nil {
+			return tb.nsTimeAwareStore.UpdateTTLWithNamespaceAt("tb", key, ttl, now)
+		}
 		if ttlStore, ok := tb.nsStore.(store.NamespacedTTLStore); ok {
 			return ttlStore.UpdateTTLWithNamespace("tb", key, ttl)
 		}
 		// Fallback for stores that don't support NamespacedTTLStore but might support TTLStore (unlikely but possible)
 	} else {
+		if tb.timeAwareStore != nil {
+			return tb.timeAwareStore.UpdateTTLAt(storeKey, ttl, now)
+		}
 		if ttlStore, ok := tb.store.(store.TTLStore); ok {
 			return ttlStore.UpdateTTL(storeKey, ttl)
 		}

@@ -212,6 +212,105 @@ func (s *MemoryStore) UpdateTTLWithNamespace(namespace, key string, ttl time.Dur
 	return nil
 }
 
+// GetAt retrieves a value from the store relative to the given time.
+func (s *MemoryStore) GetAt(key string, now time.Time) (interface{}, bool) {
+	return s.GetWithNamespaceAt("", key, now)
+}
+
+// GetWithNamespaceAt retrieves a value from the store using a namespace and key relative to the given time.
+func (s *MemoryStore) GetWithNamespaceAt(namespace, key string, now time.Time) (interface{}, bool) {
+	if len(namespace)+len(key) > s.maxKeySize {
+		return nil, false
+	}
+
+	k := internalKey{ns: namespace, key: key}
+	shard := s.getShard(k)
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+
+	entry, exists := shard.entries[k]
+	if !exists {
+		return nil, false
+	}
+
+	if entry.IsExpiredAt(now) {
+		return nil, false
+	}
+
+	return entry.Value, true
+}
+
+// SetAt stores a value with an optional TTL relative to the given time.
+func (s *MemoryStore) SetAt(key string, value interface{}, ttl time.Duration, now time.Time) error {
+	return s.SetWithNamespaceAt("", key, value, ttl, now)
+}
+
+// SetWithNamespaceAt stores a value with namespace using an optional TTL relative to the given time.
+func (s *MemoryStore) SetWithNamespaceAt(namespace, key string, value interface{}, ttl time.Duration, now time.Time) error {
+	if len(namespace)+len(key) > s.maxKeySize {
+		return ErrKeyTooLong
+	}
+
+	k := internalKey{ns: namespace, key: key}
+	shard := s.getShard(k)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	entry := Entry{
+		Value: value,
+	}
+
+	if ttl > 0 {
+		entry.ExpiresAt = now.Add(ttl)
+	}
+
+	// Optimization: avoid double lookup if shard is not full
+	if len(shard.entries) < s.maxShardSize {
+		shard.entries[k] = entry
+		return nil
+	}
+
+	// Check if key already exists to allow updates even if full
+	if _, exists := shard.entries[k]; exists {
+		shard.entries[k] = entry
+		return nil
+	}
+
+	// New key and shard is full
+	return ErrStoreFull
+}
+
+// UpdateTTLAt updates the expiration of a key relative to the given time.
+func (s *MemoryStore) UpdateTTLAt(key string, ttl time.Duration, now time.Time) error {
+	return s.UpdateTTLWithNamespaceAt("", key, ttl, now)
+}
+
+// UpdateTTLWithNamespaceAt updates the expiration of a namespaced key relative to the given time.
+func (s *MemoryStore) UpdateTTLWithNamespaceAt(namespace, key string, ttl time.Duration, now time.Time) error {
+	if len(namespace)+len(key) > s.maxKeySize {
+		return ErrKeyTooLong
+	}
+
+	k := internalKey{ns: namespace, key: key}
+	shard := s.getShard(k)
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	entry, exists := shard.entries[k]
+	if !exists {
+		// Key doesn't exist, cannot update TTL
+		return nil
+	}
+
+	if ttl > 0 {
+		entry.ExpiresAt = now.Add(ttl)
+	} else {
+		entry.ExpiresAt = time.Time{}
+	}
+	shard.entries[k] = entry
+	return nil
+}
+
 // Close stops the cleanup routine and releases resources.
 func (s *MemoryStore) Close() error {
 	s.closeOnce.Do(func() {
