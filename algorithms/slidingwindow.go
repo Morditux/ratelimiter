@@ -37,7 +37,7 @@ func NewSlidingWindow(config ratelimiter.Config, s store.Store) (*SlidingWindow,
 	sw := &SlidingWindow{
 		config:    config,
 		store:     s,
-		invWindow: 1.0 / config.Window.Seconds(),
+		invWindow: 1.0 / float64(config.Window),
 		seed:      maphash.MakeSeed(),
 	}
 
@@ -84,7 +84,7 @@ func (sw *SlidingWindow) AllowNWithDetails(key string, n int) (ratelimiter.Resul
 	}
 
 	// Calculate the weighted count
-	windowProgress := now.Sub(state.WindowStart).Seconds() * sw.invWindow
+	windowProgress := float64(now.Sub(state.WindowStart)) * sw.invWindow
 	if windowProgress > 1 {
 		windowProgress = 1
 	}
@@ -172,7 +172,7 @@ func (sw *SlidingWindow) Remaining(key string) int {
 
 	state := sw.getState(key, storeKey, useNS, time.Now())
 
-	windowProgress := time.Since(state.WindowStart).Seconds() * sw.invWindow
+	windowProgress := float64(time.Since(state.WindowStart)) * sw.invWindow
 	if windowProgress > 1 {
 		windowProgress = 1
 	}
