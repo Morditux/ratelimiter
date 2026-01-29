@@ -77,3 +77,8 @@
 **Vulnerability:** `RateLimitMiddleware` allowed processing of arbitrary length keys (limited only by Store), potentially consuming CPU (hashing) and Memory before the store rejected them.
 **Learning:** Input validation (length checks) should happen as early as possible, before expensive operations like hashing or allocation. Relying on the storage layer to enforce limits is "too late" for DoS prevention.
 **Prevention:** Implemented explicit `MaxKeySize` check in middleware, defaulting to 4096 bytes. Requests exceeding this limit are rejected immediately with 431.
+
+## 2025-05-30 - Missing Security Headers on Internal Errors
+**Vulnerability:** While `DefaultOnLimited` (429) was secure, internal errors like `ErrStoreFull` (503) or `ErrKeyTooLong` (431) used standard `http.Error`, which lacks critical security headers (`Cache-Control`, `CSP`, `X-Frame-Options`). This could lead to caching of error states or diminished defense-in-depth on error pages.
+**Learning:** Security headers must be applied uniformly to *all* responses, including unexpected internal errors. Helper functions (like `http.Error`) often default to minimal headers; wrapper functions are needed to enforce security policies consistently.
+**Prevention:** Implemented a `writeError` helper that applies strict security headers (`no-store`, `default-src 'none'`, `DENY`) before writing the error response, ensuring consistency across all failure modes.
