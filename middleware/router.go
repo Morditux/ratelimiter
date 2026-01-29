@@ -103,7 +103,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 			// FAIL SECURE: Check key length early to prevent DoS (memory/cpu) in the limiter/store.
 			if len(key) > r.options.MaxKeySize {
-				http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
+				writeError(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
 				return
 			}
 
@@ -135,7 +135,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				// FAIL SECURE: If the key is too long (likely an attack or misconfiguration),
 				// reject the request with 431 Request Header Fields Too Large.
 				if errors.Is(err, store.ErrKeyTooLong) {
-					http.Error(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
+					writeError(w, "Rate limit key too long", http.StatusRequestHeaderFieldsTooLarge)
 					return
 				}
 
@@ -143,7 +143,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				// rate limit bypass. When the store is full, we cannot persist the state,
 				// so we cannot enforce the limit.
 				if errors.Is(err, store.ErrStoreFull) {
-					http.Error(w, "Rate limit store full", http.StatusServiceUnavailable)
+					writeError(w, "Rate limit store full", http.StatusServiceUnavailable)
 					return
 				}
 
