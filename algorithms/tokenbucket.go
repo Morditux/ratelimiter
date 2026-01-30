@@ -14,6 +14,7 @@ import (
 type tokenBucketState struct {
 	Tokens     float64
 	LastRefill time.Time
+	LastSave   time.Time
 }
 
 const shardCount = 256
@@ -30,6 +31,7 @@ type TokenBucket struct {
 	mu               [shardCount]paddedMutex // Sharded mutexes to reduce contention
 	tokensPerNano    float64                 // Pre-calculated tokens/ns to avoid repetitive division
 	seed             maphash.Seed            // Seed for sharding hash
+	isPointerStore   bool                    // True if store supports pointer updates (e.g., MemoryStore)
 }
 
 // NewTokenBucket creates a new token bucket rate limiter.
@@ -53,6 +55,12 @@ func NewTokenBucket(config ratelimiter.Config, s store.Store) (*TokenBucket, err
 		store:         s,
 		tokensPerNano: tokensPerNano,
 		seed:          maphash.MakeSeed(),
+	}
+
+	// Optimization: if store is MemoryStore, we can update state in-place via pointer
+	// and skip redundant writes, only saving periodically to refresh TTL.
+	if _, ok := s.(*store.MemoryStore); ok {
+		tb.isPointerStore = true
 	}
 
 	if ns, ok := s.(store.NamespacedStore); ok {
@@ -122,8 +130,23 @@ func (tb *TokenBucket) AllowNWithDetails(key string, n int) (ratelimiter.Result,
 		result.Allowed = true
 		result.Remaining = int(state.Tokens)
 
-		if err := tb.saveState(key, storeKey, useNS, state, now); err != nil {
-			return ratelimiter.Result{}, err
+		// Optimization: For in-memory stores, we can skip saving if the TTL is still fresh.
+		// Modifications to state are already visible via pointer.
+		// We save if it's a new key (LastSave is zero) or if enough time has passed.
+		shouldSave := true
+		if tb.isPointerStore && !state.LastSave.IsZero() {
+			// Update TTL at least once per window to ensure it doesn't expire.
+			// The TTL is set to 2x Window, so updating once per Window is sufficient.
+			if now.Sub(state.LastSave) < tb.config.Window {
+				shouldSave = false
+			}
+		}
+
+		if shouldSave {
+			state.LastSave = now
+			if err := tb.saveState(key, storeKey, useNS, state, now); err != nil {
+				return ratelimiter.Result{}, err
+			}
 		}
 		return result, nil
 	}
