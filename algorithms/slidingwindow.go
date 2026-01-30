@@ -14,6 +14,7 @@ type slidingWindowState struct {
 	PrevCount   int       // Count from previous window
 	CurrCount   int       // Count in current window
 	WindowStart time.Time // Start of current window
+	LastSave    time.Time // Last time the state was saved to the store
 }
 
 // SlidingWindow implements the sliding window rate limiting algorithm.
@@ -28,6 +29,7 @@ type SlidingWindow struct {
 	mu               [shardCount]paddedMutex // Sharded mutexes to reduce contention
 	invWindow        float64                 // Pre-calculated inverse window for faster multiplication
 	seed             maphash.Seed            // Seed for sharding hash
+	isPointerStore   bool                    // True if store supports pointer updates (e.g., MemoryStore)
 }
 
 // NewSlidingWindow creates a new sliding window rate limiter.
@@ -41,6 +43,12 @@ func NewSlidingWindow(config ratelimiter.Config, s store.Store) (*SlidingWindow,
 		store:     s,
 		invWindow: 1.0 / float64(config.Window),
 		seed:      maphash.MakeSeed(),
+	}
+
+	// Optimization: if store is MemoryStore, we can update state in-place via pointer
+	// and skip redundant writes, only saving periodically to refresh TTL.
+	if _, ok := s.(*store.MemoryStore); ok {
+		sw.isPointerStore = true
 	}
 
 	if ns, ok := s.(store.NamespacedStore); ok {
@@ -133,8 +141,23 @@ func (sw *SlidingWindow) AllowNWithDetails(key string, n int) (ratelimiter.Resul
 	}
 	result.Remaining = int(remaining)
 
-	if err := sw.saveState(key, storeKey, useNS, state, now); err != nil {
-		return ratelimiter.Result{}, err
+	// Optimization: For in-memory stores, we can skip saving if the TTL is still fresh.
+	// Modifications to state are already visible via pointer.
+	// We save if it's a new key (LastSave is zero) or if enough time has passed.
+	shouldSave := true
+	if sw.isPointerStore && !state.LastSave.IsZero() {
+		// Update TTL at least once per window to ensure it doesn't expire.
+		// The TTL is set to 3x Window, so updating once per Window is sufficient.
+		if now.Sub(state.LastSave) < sw.config.Window {
+			shouldSave = false
+		}
+	}
+
+	if shouldSave {
+		state.LastSave = now
+		if err := sw.saveState(key, storeKey, useNS, state, now); err != nil {
+			return ratelimiter.Result{}, err
+		}
 	}
 	return result, nil
 }
