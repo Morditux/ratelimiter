@@ -82,3 +82,8 @@
 **Vulnerability:** While `DefaultOnLimited` (429) was secure, internal errors like `ErrStoreFull` (503) or `ErrKeyTooLong` (431) used standard `http.Error`, which lacks critical security headers (`Cache-Control`, `CSP`, `X-Frame-Options`). This could lead to caching of error states or diminished defense-in-depth on error pages.
 **Learning:** Security headers must be applied uniformly to *all* responses, including unexpected internal errors. Helper functions (like `http.Error`) often default to minimal headers; wrapper functions are needed to enforce security policies consistently.
 **Prevention:** Implemented a `writeError` helper that applies strict security headers (`no-store`, `default-src 'none'`, `DENY`) before writing the error response, ensuring consistency across all failure modes.
+
+## 2025-05-31 - Rate Limit Bypass via IP Representation
+**Vulnerability:** `DefaultKeyFunc` and `TrustedIPKeyFunc` used the raw string representation of IP addresses as rate limit keys. Attackers could bypass rate limits by using semantically identical but syntactically different IP representations (e.g., `192.168.1.1` vs `::ffff:192.168.1.1` or `2001:db8::1` vs `2001:db8:0:0:0:0:0:1`).
+**Learning:** IP addresses have multiple valid string representations. Using the raw input string as a key allows bypasses. Security controls must always canonicalize inputs to a standard form before using them as identifiers.
+**Prevention:** Updated `DefaultKeyFunc`, `TrustedIPKeyFunc`, and `getRemoteIP` to parse and re-serialize IP addresses using `net.ParseIP(ip).String()`, ensuring that all valid representations of an IP map to the same canonical key.

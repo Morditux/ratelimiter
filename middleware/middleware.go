@@ -96,15 +96,15 @@ func DefaultKeyFunc(r *http.Request) string {
 		if idx := strings.IndexByte(xff, ','); idx >= 0 {
 			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
 				cleanIP := stripIPPort(ip)
-				if net.ParseIP(cleanIP) != nil {
-					return cleanIP
+				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+					return ipObj.String()
 				}
 			}
 		} else {
 			if ip := strings.TrimSpace(xff); ip != "" {
 				cleanIP := stripIPPort(ip)
-				if net.ParseIP(cleanIP) != nil {
-					return cleanIP
+				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+					return ipObj.String()
 				}
 			}
 		}
@@ -113,8 +113,8 @@ func DefaultKeyFunc(r *http.Request) string {
 	// Check X-Real-IP header
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
 		cleanIP := stripIPPort(xri)
-		if net.ParseIP(cleanIP) != nil {
-			return cleanIP
+		if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+			return ipObj.String()
 		}
 	}
 
@@ -211,7 +211,7 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 				}
 
 				if !isTrusted {
-					return part
+					return ip.String()
 				}
 			}
 		}
@@ -221,10 +221,18 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 		firstHeader := xffHeaders[0]
 		if idx := strings.IndexByte(firstHeader, ','); idx >= 0 {
 			if ip := strings.TrimSpace(firstHeader[:idx]); ip != "" {
-				return ip
+				cleanIP := stripIPPort(ip)
+				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+					return ipObj.String()
+				}
+				return cleanIP
 			}
 		} else {
 			if ip := strings.TrimSpace(firstHeader); ip != "" {
+				cleanIP := stripIPPort(ip)
+				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+					return ipObj.String()
+				}
 				return ip
 			}
 		}
@@ -235,7 +243,11 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 
 // getRemoteIP extracts the IP from RemoteAddr, handling IPv6 brackets and ports.
 func getRemoteIP(r *http.Request) string {
-	return stripIPPort(r.RemoteAddr)
+	ipStr := stripIPPort(r.RemoteAddr)
+	if ip := net.ParseIP(ipStr); ip != nil {
+		return ip.String()
+	}
+	return ipStr
 }
 
 // stripIPPort removes the port from an IP address if present.
