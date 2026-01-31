@@ -14,6 +14,10 @@ import (
 	"github.com/Morditux/ratelimiter/store"
 )
 
+// maxIPLength is the maximum allowed length for an IP address string.
+// IPv6 + Zone ID can be long, but 256 is a safe upper bound.
+const maxIPLength = 256
+
 // KeyFunc is a function that extracts a rate limiting key from a request.
 // Common implementations include IP-based, user-based, or API key-based extraction.
 type KeyFunc func(r *http.Request) string
@@ -94,24 +98,30 @@ func DefaultKeyFunc(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		// Optimized to avoid strings.Split (memory DoS prevention)
 		if idx := strings.IndexByte(xff, ','); idx >= 0 {
-			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
-				cleanIP := stripIPPort(ip)
-				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
-					return ipObj.String()
+			// Check length of the substring before trimming/processing to avoid CPU usage
+			if idx <= maxIPLength {
+				if ip := strings.TrimSpace(xff[:idx]); ip != "" {
+					cleanIP := stripIPPort(ip)
+					if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+						return ipObj.String()
+					}
 				}
 			}
 		} else {
-			if ip := strings.TrimSpace(xff); ip != "" {
-				cleanIP := stripIPPort(ip)
-				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
-					return ipObj.String()
+			// Prevent DoS: if header value is too long to be an IP, skip processing
+			if len(xff) <= maxIPLength {
+				if ip := strings.TrimSpace(xff); ip != "" {
+					cleanIP := stripIPPort(ip)
+					if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+						return ipObj.String()
+					}
 				}
 			}
 		}
 	}
 
 	// Check X-Real-IP header
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+	if xri := r.Header.Get("X-Real-IP"); xri != "" && len(xri) <= maxIPLength {
 		cleanIP := stripIPPort(xri)
 		if ipObj := net.ParseIP(cleanIP); ipObj != nil {
 			return ipObj.String()
@@ -192,6 +202,11 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 					idx = prevComma
 				}
 
+				// Skip obviously invalid IPs to prevent DoS
+				if len(part) > maxIPLength {
+					continue
+				}
+
 				part = strings.TrimSpace(part)
 				if part == "" {
 					continue
@@ -220,20 +235,24 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 		// Use optimized extraction for first IP from the first header
 		firstHeader := xffHeaders[0]
 		if idx := strings.IndexByte(firstHeader, ','); idx >= 0 {
-			if ip := strings.TrimSpace(firstHeader[:idx]); ip != "" {
-				cleanIP := stripIPPort(ip)
-				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
-					return ipObj.String()
+			if idx <= maxIPLength {
+				if ip := strings.TrimSpace(firstHeader[:idx]); ip != "" {
+					cleanIP := stripIPPort(ip)
+					if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+						return ipObj.String()
+					}
+					return cleanIP
 				}
-				return cleanIP
 			}
 		} else {
-			if ip := strings.TrimSpace(firstHeader); ip != "" {
-				cleanIP := stripIPPort(ip)
-				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
-					return ipObj.String()
+			if len(firstHeader) <= maxIPLength {
+				if ip := strings.TrimSpace(firstHeader); ip != "" {
+					cleanIP := stripIPPort(ip)
+					if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+						return ipObj.String()
+					}
+					return ip
 				}
-				return ip
 			}
 		}
 
@@ -243,6 +262,11 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 
 // getRemoteIP extracts the IP from RemoteAddr, handling IPv6 brackets and ports.
 func getRemoteIP(r *http.Request) string {
+	// RemoteAddr is set by the server and is usually trusted/safe,
+	// but can be spoofed in some setups or large if malformed.
+	if len(r.RemoteAddr) > maxIPLength {
+		return ""
+	}
 	ipStr := stripIPPort(r.RemoteAddr)
 	if ip := net.ParseIP(ipStr); ip != nil {
 		return ip.String()
