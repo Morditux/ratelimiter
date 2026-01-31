@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"strconv"
 	"net/http"
 	"path"
 	"strings"
@@ -375,9 +376,9 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 				allowed = result.Allowed
 
 				// Set headers
-				w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", result.Limit))
-				w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
-				w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", result.ResetAt.Unix()))
+				w.Header().Set("X-RateLimit-Limit", strconv.Itoa(result.Limit))
+				w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
+				w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(result.ResetAt.Unix(), 10))
 
 				if !allowed && result.RetryAfter > 0 {
 					// Round up to nearest second
@@ -385,7 +386,7 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 					if seconds < 1 {
 						seconds = 1
 					}
-					w.Header().Set("Retry-After", fmt.Sprintf("%d", seconds))
+					w.Header().Set("Retry-After", strconv.Itoa(seconds))
 				}
 			} else {
 				// Check the rate limit using standard interface
