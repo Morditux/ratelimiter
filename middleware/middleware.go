@@ -198,7 +198,8 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 					continue
 				}
 
-				ip := net.ParseIP(part)
+				cleanPart := stripIPPort(part)
+				ip := net.ParseIP(cleanPart)
 				if ip == nil {
 					continue // Skip invalid IPs
 				}

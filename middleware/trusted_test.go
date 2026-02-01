@@ -87,3 +87,31 @@ func TestTrustedIPKeyFunc_CIDR(t *testing.T) {
 		t.Errorf("Expected 203.0.113.1, got %s", key)
 	}
 }
+
+func TestTrustedIPKeyFunc_SpoofingWithPort(t *testing.T) {
+	// Trusted proxies: 10.0.0.1
+	trustedProxies := []string{"10.0.0.1"}
+	keyFunc, err := TrustedIPKeyFunc(trustedProxies)
+	if err != nil {
+		t.Fatalf("Failed to create trusted key func: %v", err)
+	}
+
+	// Scenario: Attacker -> Proxy (adds port) -> LB (Trusted) -> App
+	// X-Forwarded-For: SpoofedIP, RealIP:Port
+	// RemoteAddr: 10.0.0.1 (Trusted)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	// 192.0.2.1 is RealIP, 198.51.100.1 is Spoofed
+	req.Header.Set("X-Forwarded-For", "198.51.100.1, 192.0.2.1:12345")
+
+	key := keyFunc(req)
+
+	// We expect the key to be 192.0.2.1 (RealIP)
+	// If stripIPPort is missing, it skips RealIP and returns SpoofedIP
+	if key == "198.51.100.1" {
+		t.Errorf("VULNERABILITY: Spoofed IP returned. The function skipped the RealIP because it had a port.")
+	} else if key != "192.0.2.1" {
+		t.Errorf("Unexpected key: %s", key)
+	}
+}
