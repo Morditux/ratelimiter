@@ -33,3 +33,7 @@
 ## 2025-05-26 - Optimized Hashing for Sharding
 **Learning:** In the `getLock` method, which is called on every request, initializing a `maphash.Hash` struct (even on the stack) and calling its methods introduced measurable overhead. Replacing it with `maphash.String` (available since Go 1.19) reduced this overhead, resulting in a ~3-6% throughput improvement in the rate limiter's hot path.
 **Action:** Prefer `maphash.String` or `maphash.Bytes` over creating a new `maphash.Hash` instance when hashing a single string or byte slice in tight loops or hot paths, as it avoids the initialization cost of the Hash struct.
+
+## 2025-05-26 - Optimized IP Parsing with netip
+**Learning:** `net.ParseIP` (returning `net.IP` slice) and subsequent `.String()` call incurs 2 allocations. `net/netip.ParseAddr` (returning `netip.Addr` value) with `.String()` incurs only 1 allocation and is ~20% faster (96ns vs 121ns) for standard IPv4 addresses.
+**Action:** Prefer `net/netip` over `net` for IP parsing and validation in hot paths (like middleware key extraction). When replacing `net.ParseIP`, remember to use `addr.Unmap()` to maintain backward compatibility for IPv4-mapped IPv6 addresses (e.g., `::ffff:1.2.3.4` -> `1.2.3.4`).

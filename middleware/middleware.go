@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"strconv"
+	"net/netip"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/Morditux/ratelimiter"
@@ -97,15 +98,15 @@ func DefaultKeyFunc(r *http.Request) string {
 		if idx := strings.IndexByte(xff, ','); idx >= 0 {
 			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
 				cleanIP := stripIPPort(ip)
-				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
-					return ipObj.String()
+				if addr, err := netip.ParseAddr(cleanIP); err == nil {
+					return addr.Unmap().String()
 				}
 			}
 		} else {
 			if ip := strings.TrimSpace(xff); ip != "" {
 				cleanIP := stripIPPort(ip)
-				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
-					return ipObj.String()
+				if addr, err := netip.ParseAddr(cleanIP); err == nil {
+					return addr.Unmap().String()
 				}
 			}
 		}
@@ -114,8 +115,8 @@ func DefaultKeyFunc(r *http.Request) string {
 	// Check X-Real-IP header
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
 		cleanIP := stripIPPort(xri)
-		if ipObj := net.ParseIP(cleanIP); ipObj != nil {
-			return ipObj.String()
+		if addr, err := netip.ParseAddr(cleanIP); err == nil {
+			return addr.Unmap().String()
 		}
 	}
 
@@ -245,8 +246,8 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 // getRemoteIP extracts the IP from RemoteAddr, handling IPv6 brackets and ports.
 func getRemoteIP(r *http.Request) string {
 	ipStr := stripIPPort(r.RemoteAddr)
-	if ip := net.ParseIP(ipStr); ip != nil {
-		return ip.String()
+	if addr, err := netip.ParseAddr(ipStr); err == nil {
+		return addr.Unmap().String()
 	}
 	return ipStr
 }
