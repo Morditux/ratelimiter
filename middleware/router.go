@@ -2,10 +2,10 @@ package middleware
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"net/http"
 	"path"
+	"strconv"
 
 	"github.com/Morditux/ratelimiter"
 	"github.com/Morditux/ratelimiter/algorithms"
@@ -96,9 +96,13 @@ func NewRouter(handler http.Handler, s store.Store, endpoints []EndpointConfig, 
 
 // ServeHTTP implements the http.Handler interface.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// Normalize path to prevent bypasses once per request
+	// e.g. //api/sensitive -> /api/sensitive
+	cleanPath := path.Clean(req.URL.Path)
+
 	// Find matching endpoint
 	for _, ep := range r.endpoints {
-		if r.matchEndpoint(req, ep.config) {
+		if r.matchEndpoint(cleanPath, req, ep.config) {
 			key := r.options.KeyFunc(req) + ":" + ep.config.Path
 
 			// FAIL SECURE: Check key length early to prevent DoS (memory/cpu) in the limiter/store.
@@ -116,16 +120,16 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				allowed = result.Allowed
 
 				// Set headers
-				w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", result.Limit))
-				w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", result.Remaining))
-				w.Header().Set("X-RateLimit-Reset", fmt.Sprintf("%d", result.ResetAt.Unix()))
+				w.Header().Set("X-RateLimit-Limit", strconv.Itoa(result.Limit))
+				w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(result.Remaining))
+				w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(result.ResetAt.Unix(), 10))
 
 				if !allowed && result.RetryAfter > 0 {
 					seconds := int(math.Ceil(result.RetryAfter.Seconds()))
 					if seconds < 1 {
 						seconds = 1
 					}
-					w.Header().Set("Retry-After", fmt.Sprintf("%d", seconds))
+					w.Header().Set("Retry-After", strconv.Itoa(seconds))
 				}
 			} else {
 				allowed, err = ep.limiter.Allow(key)
@@ -167,11 +171,7 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // matchEndpoint checks if a request matches an endpoint configuration.
-func (r *Router) matchEndpoint(req *http.Request, config EndpointConfig) bool {
-	// Normalize path to prevent bypasses
-	// e.g. //api/sensitive -> /api/sensitive
-	cleanPath := path.Clean(req.URL.Path)
-
+func (r *Router) matchEndpoint(cleanPath string, req *http.Request, config EndpointConfig) bool {
 	// Check path
 	if !matchPath(cleanPath, config.Path) {
 		return false
