@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"path"
+	"sort"
 
 	"github.com/Morditux/ratelimiter"
 	"github.com/Morditux/ratelimiter/algorithms"
@@ -78,8 +79,44 @@ func NewRouter(handler http.Handler, s store.Store, endpoints []EndpointConfig, 
 		options:   options,
 	}
 
+	// Sort endpoints by specificity to prevent route shadowing
+	// 1. Exact match > Prefix match
+	// 2. Longer path > Shorter path
+	// 3. Specific methods > All methods
+	sortedEndpoints := make([]EndpointConfig, len(endpoints))
+	copy(sortedEndpoints, endpoints)
+
+	sort.SliceStable(sortedEndpoints, func(i, j int) bool {
+		ep1 := sortedEndpoints[i]
+		ep2 := sortedEndpoints[j]
+
+		// Check for prefix match (ending in *)
+		isPrefix1 := len(ep1.Path) > 0 && ep1.Path[len(ep1.Path)-1] == '*'
+		isPrefix2 := len(ep2.Path) > 0 && ep2.Path[len(ep2.Path)-1] == '*'
+
+		// 1. Exact match takes precedence over prefix match
+		if isPrefix1 != isPrefix2 {
+			return !isPrefix1 // If 1 is exact (not prefix), it comes first
+		}
+
+		// 2. Longer path takes precedence (more specific)
+		if len(ep1.Path) != len(ep2.Path) {
+			return len(ep1.Path) > len(ep2.Path)
+		}
+
+		// 3. Specific methods take precedence over all methods
+		hasMethods1 := len(ep1.Methods) > 0
+		hasMethods2 := len(ep2.Methods) > 0
+
+		if hasMethods1 != hasMethods2 {
+			return hasMethods1
+		}
+
+		return false
+	})
+
 	// Create limiters for each endpoint
-	for _, ep := range endpoints {
+	for _, ep := range sortedEndpoints {
 		limiter, err := r.createLimiter(ep)
 		if err != nil {
 			return nil, err
