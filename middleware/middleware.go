@@ -98,15 +98,15 @@ func DefaultKeyFunc(r *http.Request) string {
 		if idx := strings.IndexByte(xff, ','); idx >= 0 {
 			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
 				cleanIP := stripIPPort(ip)
-				if addr, err := netip.ParseAddr(cleanIP); err == nil {
-					return addr.Unmap().String()
+				if canonical, ok := canonicalizeIP(cleanIP); ok {
+					return canonical
 				}
 			}
 		} else {
 			if ip := strings.TrimSpace(xff); ip != "" {
 				cleanIP := stripIPPort(ip)
-				if addr, err := netip.ParseAddr(cleanIP); err == nil {
-					return addr.Unmap().String()
+				if canonical, ok := canonicalizeIP(cleanIP); ok {
+					return canonical
 				}
 			}
 		}
@@ -115,12 +115,36 @@ func DefaultKeyFunc(r *http.Request) string {
 	// Check X-Real-IP header
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
 		cleanIP := stripIPPort(xri)
-		if addr, err := netip.ParseAddr(cleanIP); err == nil {
-			return addr.Unmap().String()
+		if canonical, ok := canonicalizeIP(cleanIP); ok {
+			return canonical
 		}
 	}
 
 	return getRemoteIP(r)
+}
+
+// canonicalizeIP parses and canonicalizes the IP address.
+// It returns the canonical string and a boolean indicating if the IP was valid.
+// Optimization: returns the original string if it is already canonical, avoiding allocation.
+func canonicalizeIP(ipStr string) (string, bool) {
+	addr, err := netip.ParseAddr(ipStr)
+	if err != nil {
+		return "", false
+	}
+	addr = addr.Unmap()
+
+	// Optimization: Use stack buffer to check if allocation can be avoided
+	var buf [64]byte
+	b := addr.AppendTo(buf[:0])
+
+	// If the canonical form matches the input string, return the input string
+	// to avoid allocating a new string.
+	// Note: string(b) does not allocate when used in comparison.
+	if string(b) == ipStr {
+		return ipStr, true
+	}
+
+	return string(b), true
 }
 
 // TrustedIPKeyFunc returns a KeyFunc that securely extracts the client IP
@@ -247,8 +271,8 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 // getRemoteIP extracts the IP from RemoteAddr, handling IPv6 brackets and ports.
 func getRemoteIP(r *http.Request) string {
 	ipStr := stripIPPort(r.RemoteAddr)
-	if addr, err := netip.ParseAddr(ipStr); err == nil {
-		return addr.Unmap().String()
+	if canonical, ok := canonicalizeIP(ipStr); ok {
+		return canonical
 	}
 	return ipStr
 }
