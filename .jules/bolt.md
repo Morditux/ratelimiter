@@ -45,3 +45,7 @@
 ## 2025-05-27 - strconv vs fmt.Sprintf for Headers
 **Learning:** Using `fmt.Sprintf` to format integers for HTTP headers (`X-RateLimit-*`) is convenient but slower and more alloc-heavy than `strconv.Itoa` / `strconv.FormatInt`. Switching to `strconv` reduced allocations by ~2 per request and improved latency by ~8% in rate-limited scenarios.
 **Action:** Prefer `strconv` functions over `fmt.Sprintf` for simple integer-to-string conversions, especially in middleware hot paths.
+
+## 2025-05-27 - Zero-Allocation IP Canonicalization
+**Learning:** `netip.Addr.String()` always allocates a new string. By using `netip.Addr.AppendTo` with a stack buffer and comparing the result to the input string, we can return the input string if it's already canonical, eliminating the allocation for valid, standard IP addresses.
+**Action:** Use `AppendTo` and comparison to avoid allocations when normalizing strings that are likely already normalized.
