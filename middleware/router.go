@@ -5,7 +5,9 @@ import (
 	"math"
 	"net/http"
 	"path"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/Morditux/ratelimiter"
 	"github.com/Morditux/ratelimiter/algorithms"
@@ -71,15 +73,49 @@ func NewRouter(handler http.Handler, s store.Store, endpoints []EndpointConfig, 
 		options.MaxKeySize = 4096
 	}
 
+	// Create a copy of endpoints to avoid mutating caller's slice
+	sortedEndpoints := make([]EndpointConfig, len(endpoints))
+	copy(sortedEndpoints, endpoints)
+
+	// Sort endpoints to prevent shadowing and ensure specificity
+	// Order:
+	// 1. Exact matches (no *) before wildcards
+	// 2. Longer paths before shorter paths
+	// 3. Specific methods before all methods
+	sort.SliceStable(sortedEndpoints, func(i, j int) bool {
+		a, b := sortedEndpoints[i], sortedEndpoints[j]
+
+		// 1. Exact Match Priority
+		aWild := strings.HasSuffix(a.Path, "*")
+		bWild := strings.HasSuffix(b.Path, "*")
+		if aWild != bWild {
+			return !aWild // If a is NOT wild (exact), it comes first
+		}
+
+		// 2. Length Priority (Longer path is more specific)
+		if len(a.Path) != len(b.Path) {
+			return len(a.Path) > len(b.Path)
+		}
+
+		// 3. Method Specificity (Defined methods > All methods)
+		aMethods := len(a.Methods) > 0
+		bMethods := len(b.Methods) > 0
+		if aMethods != bMethods {
+			return aMethods // If a has specific methods, it comes first
+		}
+
+		return false // Equal priority
+	})
+
 	r := &Router{
-		endpoints: make([]endpointLimiter, 0, len(endpoints)),
+		endpoints: make([]endpointLimiter, 0, len(sortedEndpoints)),
 		store:     s,
 		handler:   handler,
 		options:   options,
 	}
 
 	// Create limiters for each endpoint
-	for _, ep := range endpoints {
+	for _, ep := range sortedEndpoints {
 		limiter, err := r.createLimiter(ep)
 		if err != nil {
 			return nil, err
