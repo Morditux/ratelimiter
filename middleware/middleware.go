@@ -85,6 +85,8 @@ func WithMaxKeySize(size int) Option {
 	}
 }
 
+const maxIPLength = 256
+
 // DefaultKeyFunc extracts the client IP from the request.
 // It checks X-Forwarded-For, X-Real-IP, and falls back to RemoteAddr.
 // Note: This function blindly trusts X-Forwarded-For, which can be spoofed.
@@ -97,16 +99,20 @@ func DefaultKeyFunc(r *http.Request) string {
 		// Optimized to avoid strings.Split (memory DoS prevention)
 		if idx := strings.IndexByte(xff, ','); idx >= 0 {
 			if ip := strings.TrimSpace(xff[:idx]); ip != "" {
-				cleanIP := stripIPPort(ip)
-				if canonical, ok := canonicalizeIP(cleanIP); ok {
-					return canonical
+				if len(ip) <= maxIPLength {
+					cleanIP := stripIPPort(ip)
+					if canonical, ok := canonicalizeIP(cleanIP); ok {
+						return canonical
+					}
 				}
 			}
 		} else {
 			if ip := strings.TrimSpace(xff); ip != "" {
-				cleanIP := stripIPPort(ip)
-				if canonical, ok := canonicalizeIP(cleanIP); ok {
-					return canonical
+				if len(ip) <= maxIPLength {
+					cleanIP := stripIPPort(ip)
+					if canonical, ok := canonicalizeIP(cleanIP); ok {
+						return canonical
+					}
 				}
 			}
 		}
@@ -114,9 +120,11 @@ func DefaultKeyFunc(r *http.Request) string {
 
 	// Check X-Real-IP header
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		cleanIP := stripIPPort(xri)
-		if canonical, ok := canonicalizeIP(cleanIP); ok {
-			return canonical
+		if len(xri) <= maxIPLength {
+			cleanIP := stripIPPort(xri)
+			if canonical, ok := canonicalizeIP(cleanIP); ok {
+				return canonical
+			}
 		}
 	}
 
@@ -223,6 +231,10 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 					continue
 				}
 
+				if len(part) > maxIPLength {
+					continue
+				}
+
 				cleanPart := stripIPPort(part)
 				ip := net.ParseIP(cleanPart)
 				if ip == nil {
@@ -248,19 +260,23 @@ func TrustedIPKeyFunc(trustedProxies []string) (KeyFunc, error) {
 		firstHeader := xffHeaders[0]
 		if idx := strings.IndexByte(firstHeader, ','); idx >= 0 {
 			if ip := strings.TrimSpace(firstHeader[:idx]); ip != "" {
-				cleanIP := stripIPPort(ip)
-				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
-					return ipObj.String()
+				if len(ip) <= maxIPLength {
+					cleanIP := stripIPPort(ip)
+					if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+						return ipObj.String()
+					}
+					return cleanIP
 				}
-				return cleanIP
 			}
 		} else {
 			if ip := strings.TrimSpace(firstHeader); ip != "" {
-				cleanIP := stripIPPort(ip)
-				if ipObj := net.ParseIP(cleanIP); ipObj != nil {
-					return ipObj.String()
+				if len(ip) <= maxIPLength {
+					cleanIP := stripIPPort(ip)
+					if ipObj := net.ParseIP(cleanIP); ipObj != nil {
+						return ipObj.String()
+					}
+					return ip
 				}
-				return ip
 			}
 		}
 
