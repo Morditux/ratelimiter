@@ -17,6 +17,8 @@ type internalKey struct {
 type shard struct {
 	mu      sync.RWMutex
 	entries map[internalKey]Entry
+	// Pad to 64 bytes to avoid false sharing
+	_ [32]byte
 }
 
 // MemoryStore is an in-memory implementation of the Store interface.
