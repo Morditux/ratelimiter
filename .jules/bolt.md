@@ -53,3 +53,7 @@
 ## 2025-05-28 - False Sharing in Sharded Locks
 **Learning:** Sharded locks (like `MemoryStore`'s `[256]*shard`) can suffer from false sharing if the shard structs are small enough (32 bytes) that multiple shards fit in a single cache line (64 bytes). This causes cache line bouncing between cores even when accessing different shards.
 **Action:** Ensure sharded structs with mutexes are padded to at least 64 bytes (cache line size) using `_ [padding]byte`. Adding 32 bytes of padding to `MemoryStore` shards improved concurrent throughput by ~7%.
+
+## 2025-05-29 - Fast Path Cleaning
+**Learning:** `path.Clean` is a robust but computationally expensive function that often allocates, even for clean paths (depending on Go version and implementation details). In the Router middleware, `path.Clean` is called on every request. By implementing a `fastPathClean` wrapper that performs a zero-allocation scan for dirty characters (`//`, `/.`, trailing slash) and returns the original string if clean, we achieved a ~2.4x speedup (23ns vs 56ns) for the common case of clean paths.
+**Action:** When a standard library function (like `path.Clean`) is too slow for a hot path but required for correctness, check if a lightweight "fast path" check can be implemented to skip the expensive call in the common case.
