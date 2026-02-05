@@ -334,6 +334,8 @@ func writeError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Permissions-Policy", "interest-cohort=()")
 	http.Error(w, msg, code)
 }
 
