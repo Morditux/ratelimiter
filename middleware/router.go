@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -75,6 +76,11 @@ func NewRouter(handler http.Handler, s store.Store, endpoints []EndpointConfig, 
 	// Create a copy of endpoints to avoid mutating caller's slice
 	sortedEndpoints := make([]EndpointConfig, len(endpoints))
 	copy(sortedEndpoints, endpoints)
+
+	// Normalize paths in configuration to prevent bypasses due to mismatched slash handling
+	for i := range sortedEndpoints {
+		sortedEndpoints[i].Path = path.Clean(sortedEndpoints[i].Path)
+	}
 
 	// Sort endpoints to prevent shadowing and ensure specificity
 	// Order:

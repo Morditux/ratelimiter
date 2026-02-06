@@ -87,3 +87,8 @@
 **Vulnerability:** `DefaultKeyFunc` and `TrustedIPKeyFunc` used the raw string representation of IP addresses as rate limit keys. Attackers could bypass rate limits by using semantically identical but syntactically different IP representations (e.g., `192.168.1.1` vs `::ffff:192.168.1.1` or `2001:db8::1` vs `2001:db8:0:0:0:0:0:1`).
 **Learning:** IP addresses have multiple valid string representations. Using the raw input string as a key allows bypasses. Security controls must always canonicalize inputs to a standard form before using them as identifiers.
 **Prevention:** Updated `DefaultKeyFunc`, `TrustedIPKeyFunc`, and `getRemoteIP` to parse and re-serialize IP addresses using `net.ParseIP(ip).String()`, ensuring that all valid representations of an IP map to the same canonical key.
+
+## 2025-06-01 - Implicit Security Headers in Go Standard Library
+**Vulnerability:** Redundant or confusing security header application.
+**Learning:** Go's `http.Error` automatically sets `X-Content-Type-Options: nosniff`. Manually setting it before calling `http.Error` is redundant. Absence of explicit code setting this header does not mean the header is missing.
+**Prevention:** Rely on `http.Error` for `nosniff`, but explicitly set other headers like `Referrer-Policy` and `Permissions-Policy` as they are not included.

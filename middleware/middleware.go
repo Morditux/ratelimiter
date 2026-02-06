@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"math"
 	"net"
-	"net/netip"
 	"net/http"
+	"net/netip"
+	"path"
 	"strconv"
 	"strings"
 
@@ -333,6 +334,8 @@ func writeError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Permissions-Policy", "interest-cohort=()")
 	http.Error(w, msg, code)
 }
 
@@ -363,6 +366,11 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 
 	for _, opt := range opts {
 		opt(options)
+	}
+
+	// Normalize exclude paths to prevent bypasses due to mismatched slash handling
+	for i, p := range options.ExcludePaths {
+		options.ExcludePaths[i] = path.Clean(p)
 	}
 
 	if options.MaxKeySize <= 0 {
