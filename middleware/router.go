@@ -4,7 +4,6 @@ import (
 	"errors"
 	"math"
 	"net/http"
-	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -134,7 +133,7 @@ func NewRouter(handler http.Handler, s store.Store, endpoints []EndpointConfig, 
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// Normalize path to prevent bypasses once per request
 	// e.g. //api/sensitive -> /api/sensitive
-	cleanPath := path.Clean(req.URL.Path)
+	cleanPath := fastPathClean(req.URL.Path)
 
 	// Find matching endpoint
 	for _, ep := range r.endpoints {
