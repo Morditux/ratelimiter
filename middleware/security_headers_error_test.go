@@ -49,6 +49,9 @@ func TestRateLimitMiddleware_StoreFull_SecurityHeaders(t *testing.T) {
 		"Cache-Control",
 		"Content-Security-Policy",
 		"X-Frame-Options",
+		"Referrer-Policy",
+		"Permissions-Policy",
+		"X-Content-Type-Options",
 	}
 
 	for _, h := range requiredHeaders {
@@ -99,6 +102,9 @@ func TestRouter_StoreFull_SecurityHeaders(t *testing.T) {
 		"Cache-Control",
 		"Content-Security-Policy",
 		"X-Frame-Options",
+		"Referrer-Policy",
+		"Permissions-Policy",
+		"X-Content-Type-Options",
 	}
 
 	for _, h := range requiredHeaders {
