@@ -360,11 +360,11 @@ func TestDefaultKeyFunc_Complex(t *testing.T) {
 			expected:   "9.9.9.9",
 		},
 		{
-			name: "All empty parts XFF",
-			xff: ", , ",
-			xri: "1.1.1.1",
+			name:       "All empty parts XFF",
+			xff:        ", , ",
+			xri:        "1.1.1.1",
 			remoteAddr: "2.2.2.2:22",
-			expected: "1.1.1.1",
+			expected:   "1.1.1.1",
 		},
 	}
 
