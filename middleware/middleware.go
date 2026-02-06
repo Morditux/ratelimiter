@@ -382,7 +382,7 @@ func RateLimitMiddleware(limiter ratelimiter.Limiter, opts ...Option) func(http.
 			// Check excluded paths
 			if len(options.ExcludePaths) > 0 {
 				// Normalize path to ensure consistent matching
-				cleanPath := path.Clean(r.URL.Path)
+				cleanPath := fastPathClean(r.URL.Path)
 				for _, p := range options.ExcludePaths {
 					if matchPath(cleanPath, p) {
 						next.ServeHTTP(w, r)
