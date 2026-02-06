@@ -144,7 +144,7 @@ func TestRouter_MaxKeySize_EarlyRejection(t *testing.T) {
 
 	router, err := NewRouter(handler, s, []EndpointConfig{
 		{
-			Path: largePath,
+			Path:   largePath,
 			Config: ratelimiter.Config{Rate: 1, Window: time.Minute},
 		},
 	})

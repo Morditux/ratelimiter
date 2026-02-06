@@ -77,6 +77,11 @@ func NewRouter(handler http.Handler, s store.Store, endpoints []EndpointConfig, 
 	sortedEndpoints := make([]EndpointConfig, len(endpoints))
 	copy(sortedEndpoints, endpoints)
 
+	// Normalize paths in configuration to prevent bypasses due to mismatched slash handling
+	for i := range sortedEndpoints {
+		sortedEndpoints[i].Path = path.Clean(sortedEndpoints[i].Path)
+	}
+
 	// Sort endpoints to prevent shadowing and ensure specificity
 	// Order:
 	// 1. Exact matches (no *) before wildcards

@@ -75,7 +75,7 @@ func TestRouter_StoreFull_SecurityHeaders(t *testing.T) {
 
 	config := []EndpointConfig{
 		{
-			Path: "/",
+			Path:   "/",
 			Config: ratelimiter.Config{Rate: 1, Window: time.Minute},
 		},
 	}
